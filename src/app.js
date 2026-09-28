@@ -1,4 +1,4 @@
-// app.js — Drift app shell: shared state S, layers + printing, the
+// app.js — Riso Rider app shell: shared state S, layers + printing, the
 // edit → ride → (win | back to edit) state machine, input, settings, assist and UI.
 // Contract: ARCHITECTURE.md. Look and wording: UI.md ("the print shop").
 import * as P from './physics.js';

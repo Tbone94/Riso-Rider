@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Make icons</title>
+<style>body{margin:16px;background:#ddd;font:13px ui-monospace,Menlo,monospace}canvas{margin:6px;background:#fff;vertical-align:top}</style>
+</head>
+<body>
+<p>Prints the app icons with riso.js and saves them through tools/serve.py's /save (into backgrounds/). Run <code>make()</code>.</p>
+<div id="out"></div>
+<script src="../riso.js"></script>
+<script>
+// The icon: a key-ink ribbon (the drawn line) swooping into a ring, the rider on it, a sun behind.
+// Content sits inside the central ~64% so it survives maskable-icon cropping.
+const INK=['Sunflower','Orange','Federal Blue'].map(n=>Riso.INKS[n]);
+function plates(S,pad){
+  const mk=()=>{const c=document.createElement('canvas');c.width=c.height=S;const g=c.getContext('2d');g.scale(S/100,S/100);return[c,g];};
+  const [cl,L]=mk(),[cm,M]=mk(),[ck,K]=mk(),A=a=>`rgba(0,0,0,${a})`;
+  const T=v=>pad+v*(100-2*pad)/100;               // map 0..100 into the safe area
+  // light: the sun, plus a soft band of sky
+  L.fillStyle=A(.35);L.fillRect(0,0,100,100);
+  L.fillStyle=A(1);L.beginPath();L.arc(T(68),T(30),(100-2*pad)*.2,0,7);L.fill();
+  // mid: the ribbon's misregistered shadow and the rider
+  const ribbon=(g,dx,dy,w)=>{g.lineCap='round';g.lineWidth=w;g.beginPath();g.moveTo(T(6)+dx,T(40)+dy);
+    g.bezierCurveTo(T(30)+dx,T(38)+dy,T(38)+dx,T(84)+dy,T(92)+dx,T(78)+dy);g.stroke();};
+  M.strokeStyle=A(.9);ribbon(M,2.2,1.6,(100-2*pad)*.1);
+  M.fillStyle=A(1);M.beginPath();M.arc(T(24),T(33),(100-2*pad)*.085,0,7);M.fill();
+  // key: the ribbon, the ring, the rider's outline
+  K.strokeStyle=A(1);ribbon(K,0,0,(100-2*pad)*.1);
+  // knock the lower plates out under the key ribbon (as a riso printer would), so it prints clean
+  // blue with only the misregistered orange edge showing, not a muddy overprint
+  [L,M].forEach(g=>{g.save();g.globalCompositeOperation='destination-out';g.strokeStyle='#000';ribbon(g,0,0,(100-2*pad)*.1);g.restore();});
+  K.lineWidth=(100-2*pad)*.045;K.beginPath();K.arc(T(80),T(58),(100-2*pad)*.13,0,7);K.stroke();
+  K.lineWidth=(100-2*pad)*.02;K.beginPath();K.arc(T(24)+1.2,T(33)-.8,(100-2*pad)*.085,0,7);K.stroke();
+  return[cl,cm,ck].map(c=>{const d=c.getContext('2d').getImageData(0,0,S,S).data,o=new Float32Array(S*S);for(let i=0;i<S*S;i++)o[i]=d[i*4+3]/255;return o;});}
+function render(S,pad){const dens=plates(S,pad);
+  const img=Riso.print({w:S,h:S,paper:Riso.PAPERS.Natural,texture:.8,seed:7,
+    layers:Riso.layersFor(dens,INK,{seed:7,cell:Math.max(2.5,S/170),mis:S/400,screen:['grain','grain','grain'],noise:'blue'})});
+  const c=document.createElement('canvas');c.width=c.height=S;c.getContext('2d').putImageData(img,0,0);return c;}
+function down(src,S){const c=document.createElement('canvas');c.width=c.height=S;const g=c.getContext('2d');g.imageSmoothingQuality='high';g.drawImage(src,0,0,S,S);return c;}
+async function save(c,name){const b=await new Promise(r=>c.toBlob(r,'image/png'));const r=await fetch(`/save?name=${name}&ext=png`,{method:'POST',body:b});return name+': '+(r.ok?'saved':'FAILED '+r.status);}
+async function make(){const out=document.getElementById('out');out.innerHTML='';const log=[];
+  const any=render(1024,10),mask=render(1024,20);   // "any" icons use more of the square; maskable keeps a wider safe margin
+  const set=[['icon-512',down(any,512)],['icon-192',down(any,192)],['apple-touch-icon',down(any,180)],['icon-maskable-512',down(mask,512)],['favicon-32',down(any,32)]];
+  for(const[n,c] of set){out.append(c);log.push(await save(c,n));}
+  return log.join('\n');}
+</script>
+</body>
+</html>

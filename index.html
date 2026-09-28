@@ -3,7 +3,18 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Drift</title>
+<title>Riso Rider</title>
+<meta name="description" content="Draw a track in 2D, then ride it in first person. A physics puzzle printed like a risograph.">
+<!-- installable app (PWA): manifest, icons, full-screen on phones -->
+<link rel="manifest" href="manifest.webmanifest">
+<meta name="theme-color" content="#f2ede3">
+<link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Riso Rider">
+<meta name="format-detection" content="telephone=no">
 <!-- Fonts are bundled in fonts/ (SIL OFL 1.1, see fonts/OFL-*.txt): works offline, no third-party request. -->
 <link rel="preload" href="fonts/big-shoulders-stencil-display-latin.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="fonts/cutive-mono-latin.woff2" as="font" type="font/woff2" crossorigin>
@@ -25,12 +36,15 @@
   --inkmask:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='m'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.75' numOctaves='2' seed='3' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 -7 0 0 0 5.1'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23m)'/%3E%3C/svg%3E");
 }
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{margin:0;min-height:100%}
-body{background:var(--paper) var(--grain);color:var(--key);font:15px/1.4 var(--mono);display:flex;justify-content:center;overflow-x:hidden}
+html,body{margin:0;min-height:100%;overscroll-behavior:none}   /* no pull-to-refresh or rubber-band while drawing */
+body{background:var(--paper) var(--grain);color:var(--key);font:15px/1.4 var(--mono);display:flex;justify-content:center;overflow-x:hidden;
+  /* keep clear of notches and the home bar when installed full-screen */
+  padding:env(safe-area-inset-top,0px) env(safe-area-inset-right,0px) env(safe-area-inset-bottom,0px) env(safe-area-inset-left,0px)}
+:root{--sx:calc(env(safe-area-inset-left,0px) + env(safe-area-inset-right,0px));--sy:calc(env(safe-area-inset-top,0px) + env(safe-area-inset-bottom,0px))}
 button{font:inherit;color:inherit;background:none;border:0;padding:0;margin:0;cursor:pointer;touch-action:manipulation;-webkit-user-select:none;user-select:none}
 button:disabled{cursor:default;opacity:.4}
 [hidden]{display:none!important}
-#app{width:min(100vw - 32px,(100vh - 318px)*1.6);min-width:min(100vw - 32px,560px);display:flex;flex-direction:column;gap:8px;padding:10px 0 18px}
+#app{width:min(100vw - 32px - var(--sx),(100vh - 318px - var(--sy))*1.6);min-width:min(100vw - 32px - var(--sx),560px);display:flex;flex-direction:column;gap:8px;padding:10px 0 18px}
 .paper{background:var(--paper) var(--grain);transform:rotate(var(--tilt,0deg))}
 .misreg{text-shadow:2px 1.5px 0 var(--mid)}
 
@@ -228,7 +242,7 @@ body.touch #ridebar .deskonly{display:none}
   .job{width:70px;padding:5px 4px 3px}.job canvas,.job .blank{width:62px;height:39px}#jobs{gap:8px}
   #refund b{font-size:16px}#refund span{font-size:10px}
   #s-vol{width:80px}#panel{grid-template-columns:1fr;gap:10px}
-  #app{width:calc(100vw - 32px);min-width:0;gap:6px}
+  #app{width:calc(100vw - 32px - var(--sx));min-width:0;gap:6px}
   #wordmark{display:none}
   #jobno{font-size:36px}
   #lname{font-size:16px}
@@ -264,7 +278,7 @@ body.touch #ridebar .deskonly{display:none}
 </svg>
 <div id="app">
   <div id="top">
-    <div id="wordmark" class="misreg">DRIFT</div>
+    <div id="wordmark" class="misreg">RISO RIDER</div>
     <nav id="board" aria-label="Levels"><div class="line"></div><div id="jobs"></div></nav>
     <button class="stamp small" id="gear" aria-expanded="false" aria-controls="panel"><span class="face">Settings</span></button>
   </div>
@@ -351,5 +365,10 @@ body.touch #ridebar .deskonly{display:none}
 
 <script src="riso.js"></script>
 <script type="module" src="src/app.js"></script>
+<script>
+// Offline support once installed. Browsers only allow service workers on https (or localhost).
+if('serviceWorker' in navigator&&(isSecureContext||location.hostname==='localhost'))
+  addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(e=>console.warn('service worker:',e)));
+</script>
 </body>
 </html>
