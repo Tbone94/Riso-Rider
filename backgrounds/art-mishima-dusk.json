@@ -1,0 +1,26 @@
+{
+  "mode": "art",
+  "inks": [
+    "Coral",
+    "Violet",
+    "Federal Blue"
+  ],
+  "paper": "Natural",
+  "screen": "dots",
+  "cell": 6,
+  "mis": 2.5,
+  "texture": 1,
+  "calm": 0.3,
+  "seed": 7,
+  "art": "hiroshige-mishima-mist.jpg",
+  "method": "tone",
+  "agedPaper": true,
+  "zoom": 1,
+  "fx": 0.5,
+  "fy": 0.5,
+  "contrast": 1.1,
+  "brightness": 0,
+  "saturation": 1.1,
+  "posterize": 0,
+  "soften": 1
+}

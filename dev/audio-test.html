@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Drift · audio test</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Stencil+Display:wght@400..900&family=Cutive+Mono&display=swap" rel="stylesheet">
+<style>
+:root{--paper:#f2ede3;--light:#ffb511;--mid:#ff6c2f;--key:#3d5588;--mono:"Cutive Mono",ui-monospace,Menlo,monospace;--display:"Big Shoulders Stencil Display",ui-monospace,monospace}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--key);font:14px/1.45 var(--mono);padding:14px 16px 40px}
+h1{margin:0 0 6px;font:800 28px/1 var(--display);letter-spacing:.12em;text-shadow:2px 1.5px 0 var(--mid)}
+h2{margin:18px 0 6px;font:700 17px/1 var(--display);letter-spacing:.16em}
+.row{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+button,select{font:13px var(--mono);color:var(--key);background:var(--paper);border:1.5px solid var(--key);padding:4px 8px;cursor:pointer}
+button:active{background:var(--light)}
+label{display:inline-flex;gap:5px;align-items:center}
+#pad{width:min(100%,640px);aspect-ratio:16/10;border:1.5px solid var(--key);background:#fbf8f1;touch-action:none;display:block}
+#stats{white-space:pre;font-size:12px;background:#fbf8f1;border:1px solid var(--key);padding:6px;max-width:640px}
+table{border-collapse:collapse;font-size:12px}td,th{border:1px solid var(--key);padding:2px 6px;text-align:right}td:first-child,th:first-child{text-align:left}
+.hot{background:var(--light)}
+.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px}
+</style>
+</head>
+<body>
+<h1>AUDIO TEST</h1>
+<div class="row">
+  <span id="state">Click anywhere to unlock sound.</span>
+  <label><input type="checkbox" id="mute"> Mute</label>
+  <label>Volume <input type="range" id="vol" min="0" max="1" step=".01" value=".7"> <span id="volv">0.70</span></label>
+</div>
+
+<div class="cols">
+<div>
+<h2>UI</h2>
+<div class="row" id="ui"></div>
+<h2>STAMPS</h2>
+<div class="row"><button data-stamp="0">CLEARED! (0)</button><button data-stamp="1">Star 1</button><button data-stamp="2">Star 2</button><button data-stamp="3">Star 3</button><button id="winseq">Win sequence</button></div>
+<h2>EVENTS</h2>
+<div class="row" id="ev"></div>
+<h2>SWOOP</h2>
+<div class="row"><button data-sw="1100">Full (1100 ms)</button><button data-sw="420">Quick (420 ms)</button><button id="swskip">Full, skipped at 30%</button><span id="swp"></span></div>
+</div>
+<div>
+<h2>DRAWING PAD</h2>
+<div class="row" style="margin-bottom:6px">Tool <select id="tool"><option>line</option><option>wind</option><option>rope</option><option>well</option></select>
+<label><input type="checkbox" id="budget"> Ink runs out after 600 units</label><span id="penv"></span></div>
+<canvas id="pad" width="800" height="500"></canvas>
+</div>
+</div>
+
+<h2>SIMULATED RIDE</h2>
+<div class="row">
+  <button id="rgo">Start ride</button><button id="rstop">Stop ride</button>
+  <label>Speed <input type="range" id="spd" min="0" max="600" value="250"> <span id="spdv">250</span></label>
+  Surface <select id="surf"><option value="block">road (block)</option><option value="crumble">crumble</option><option value="line">tightrope (line)</option><option value="rope">rope</option><option value="ice">ice</option><option value="air">in the air</option></select>
+  <label>Sway <input type="range" id="sway" min="-1" max="1" step=".01" value="0"> <span id="swayv">0</span></label>
+  <label><input type="checkbox" id="swauto"> auto sway</label>
+  <label>Rope depth <input type="range" id="depth" min="0" max="20" value="6"></label>
+  <label><input type="checkbox" id="wind"> in wind</label>
+  <label><input type="checkbox" id="boost"> on boost</label>
+  <button id="crk">Touch crumble</button>
+</div>
+
+<h2>CHECKS</h2>
+<div class="row"><button id="soak">Soak test (10 s of random events + ride)</button><button id="measure">Measure mix (offline render)</button><button id="teardown">Idle check (stop all, wait 5 s)</button></div>
+<div id="stats"></div>
+<div id="mix"></div>
+
+<script type="module">
+import {createAudio} from '../src/audio.js';
+const A=createAudio();window.A=A;
+const $=id=>document.getElementById(id);
+let unlocked=false;
+addEventListener('pointerdown',()=>{A.unlock();unlocked=true;},{capture:true});
+addEventListener('keydown',()=>{A.unlock();unlocked=true;},{capture:true});
+$('mute').onchange=e=>A.setMuted(e.target.checked);
+$('vol').oninput=e=>{A.setVolume(+e.target.value);$('volv').textContent=(+e.target.value).toFixed(2);};
+
+for(const n of['press','tool','toggle','slip','undo','clear','next','locked'])mk($('ui'),n,()=>A.ui(n));
+mk($('ui'),'inkEmpty',()=>A.inkEmpty());
+function mk(p,label,fn){const b=document.createElement('button');b.textContent=label;b.onclick=fn;p.appendChild(b);return b;}
+document.querySelectorAll('[data-stamp]').forEach(b=>b.onclick=()=>A.stamp(+b.dataset.stamp));
+$('winseq').onclick=()=>{A.event({type:'win'});[0,1,2,3].forEach((i,k)=>setTimeout(()=>A.stamp(i),250+k*(k?300:500)));};
+
+// fake world for events (land surface comes from the ride sim if running)
+const EV=[['jump',{type:'jump'}],['land soft',{type:'land',v:120}],['land hard',{type:'land',v:600}],['bounce',{type:'bounce'}],
+  ['drop 25',{type:'drop',v:25}],['drop 15',{type:'drop',v:15}],['drop 40',{type:'drop',v:40}],['boost',{type:'boost'}],['crumble',{type:'crumble',i:0}],
+  ['fell',{type:'fell'}],['popped',{type:'popped'}],['stuck',{type:'stuck'}],['win',{type:'win'}]];
+for(const[l,e]of EV)mk($('ev'),l,()=>A.event({...e,t:0}));
+mk($('ev'),'reset drop streak',()=>{A.stopRide();if(riding){world=mkWorld();}});
+
+// ---- swoop ----
+function swoop(ms,skipAt=2){const t0=performance.now();const f=()=>{let p=(performance.now()-t0)/ms;if(p>=skipAt)p=1;p=Math.min(1,p);A.transition(p);$('swp').textContent='p='+p.toFixed(2);if(p<1)requestAnimationFrame(f);};f();}
+document.querySelectorAll('[data-sw]').forEach(b=>b.onclick=()=>swoop(+b.dataset.sw));
+$('swskip').onclick=()=>swoop(1100,.3);
+
+// ---- drawing pad: speed in design units/s (the pad is 800 design units wide) ----
+const pad=$('pad'),pg=pad.getContext('2d');let pen=null,inkLeft=600;
+function padPt(e){const r=pad.getBoundingClientRect();return[(e.clientX-r.left)/r.width*800,(e.clientY-r.top)/r.height*500];}
+pad.onpointerdown=e=>{pad.setPointerCapture(e.pointerId);const p=padPt(e),tool=$('tool').value;inkLeft=600;
+  pen={p,t:performance.now(),tool,a:p};A.draw(tool,'start',0);if(tool==='well'){pg.strokeStyle='#3d5588';pg.lineWidth=2;pg.beginPath();pg.arc(p[0],p[1],14,0,7);pg.stroke();pen=null;}};
+pad.onpointermove=e=>{if(!pen)return;const p=padPt(e),t=performance.now(),dt=Math.max(1,t-pen.t)/1000,d=Math.hypot(p[0]-pen.p[0],p[1]-pen.p[1]),sp=d/dt;
+  if($('budget').checked){inkLeft-=d;if(inkLeft<0){A.inkEmpty();pen.p=p;pen.t=t;return;}}
+  A.draw(pen.tool,'move',sp);$('penv').textContent=`speed ${sp.toFixed(0)} u/s`;
+  pg.strokeStyle=pen.tool==='wind'?'#ff6c2f':'#3d5588';pg.lineWidth=pen.tool==='rope'?3:2;pg.setLineDash(pen.tool==='rope'?[8,5]:[]);
+  pg.beginPath();if(pen.tool==='rope'){pg.clearRect(0,0,800,500);pg.moveTo(...pen.a);}else pg.moveTo(...pen.p);pg.lineTo(...p);pg.stroke();pen.p=p;pen.t=t;};
+pad.onpointerup=pad.onpointercancel=()=>{if(!pen)return;A.draw(pen.tool,'end',0);pen=null;};
+
+// ---- simulated ride: a stand-in world object with the fields audio.js reads ----
+function mkWorld(){return{t:0,status:'run',path:[],events:[],ropes:[{side:0,depth:0}],crumbles:[{touchedAt:null,gone:false}],boosts:[],
+  rider:{speed:0,grounded:true,groundKind:'block',surface:'block',sway:0,boost:-1,z:0}};}
+let world=null,riding=false,last=0,T=0;
+function rideFrame(ts){if(!riding)return;const dt=Math.min(.05,(ts-last)/1000||1/60);last=ts;T+=dt;world.t=T;
+  const r=world.rider,s=$('surf').value;r.speed=+$('spd').value;r.grounded=s!=='air';
+  r.surface=s==='air'?null:s;r.groundKind=s==='air'?null:(s==='line'||s==='rope')?s:'block';
+  if($('swauto').checked){r.sway=s==='line'?Math.min(1,T/3)*Math.sin(2.4*T):0;$('sway').value=r.sway;$('swayv').textContent=r.sway.toFixed(2);}else r.sway=s==='line'?+$('sway').value:0;
+  world.ropes[0].side=s==='rope'?1:0;world.ropes[0].depth=s==='rope'?+$('depth').value:0;
+  r.boost=$('boost').checked&&r.grounded?0:-1;
+  if(world.path.length>200)world.path.length=0;world.path.push([0,0,0,$('wind').checked?3:r.grounded?0:1]);
+  A.ride(world,dt);requestAnimationFrame(rideFrame);}
+$('rgo').onclick=()=>{if(!riding){riding=true;world=mkWorld();T=0;last=performance.now();requestAnimationFrame(rideFrame);}};
+$('rstop').onclick=()=>{riding=false;A.stopRide();};
+$('crk').onclick=()=>{if(world){world.crumbles[0]={touchedAt:T,gone:false};setTimeout(()=>{world.crumbles[0].gone=true;A.event({type:'crumble',i:0});},350);}};
+$('spd').oninput=e=>$('spdv').textContent=e.target.value;$('sway').oninput=e=>$('swayv').textContent=e.target.value;
+
+// ---- stats: logged every second, so node growth would show ----
+function stats(){const s=A._stats();$('state').textContent=unlocked?`AudioContext: ${s.state}`:'Click anywhere to unlock sound.';
+  $('stats').textContent=`voices ${s.voices}  voiceNodes ${s.voiceNodes}  groupNodes ${s.groupNodes} [${s.groups.join(',')}]  master ${s.masterNodes}  created(total) ${s.created}`;
+  if(unlocked)console.log('[audio stats]',JSON.stringify(s));}
+setInterval(stats,1000);stats();
+
+// ---- soak: random events + a ride for 10 s ----
+$('soak').onclick=()=>{if(!riding)$('rgo').onclick();const t0=performance.now(),surfs=['block','line','rope','ice','air','crumble'];
+  const iv=setInterval(()=>{const[,e]=EV[Math.floor(Math.random()*EV.length)];A.event({...e});if(Math.random()<.3)A.ui(['press','tool','slip','toggle'][Math.floor(Math.random()*4)]);
+    $('surf').value=surfs[Math.floor(Math.random()*surfs.length)];$('spd').value=Math.random()*600;
+    if(performance.now()-t0>10000){clearInterval(iv);$('rstop').onclick();console.log('[soak] done',JSON.stringify(A._stats()));}},50);};
+$('teardown').onclick=()=>{$('rstop').onclick();console.log('[idle] before',JSON.stringify(A._stats()));setTimeout(()=>console.log('[idle] after 5 s',JSON.stringify(A._stats())),5000);};
+
+// ---- offline mix measurement ----
+const SR=48000;
+const frames=(oc,dur,fn)=>{for(let i=1;i<Math.floor(dur*60);i++){const t=i/60;oc.suspend(t).then(()=>{fn(t,i);oc.resume();});}};
+const fw=(s,surf,extra={})=>{const w=mkWorld();Object.assign(w.rider,{speed:s,grounded:surf!=='air',surface:surf==='air'?null:surf,groundKind:surf==='line'?'line':surf==='rope'?'rope':surf==='air'?null:'block'},extra.r||{});
+  if(surf==='rope'){w.ropes[0].side=1;w.ropes[0].depth=12;}if(extra.wind)w.path.push([0,0,0,3]);if(extra.boost)w.rider.boost=0;return w;};
+const rideM=(surf,sp,extra)=>({dur:1.5,run:(a,oc)=>{const w=fw(sp,surf,extra);a.ride(w,1/60);frames(oc,1.5,(t)=>{if(extra&&extra.sway)w.rider.sway=Math.sin(2.4*t*3);a.ride(w,1/60);});}});
+const TESTS={
+  'stamp 0':{run:a=>a.stamp(0)},'stamp 1':{run:a=>a.stamp(1)},'stamp 3':{run:a=>a.stamp(3)},
+  'land hard':{run:a=>a.event({type:'land',v:600})},'land soft':{run:a=>a.event({type:'land',v:120})},
+  'bounce':{run:a=>a.event({type:'bounce'})},'crumble':{run:a=>a.event({type:'crumble'})},'win':{dur:5,run:a=>a.event({type:'win'})},
+  'popped':{run:a=>a.event({type:'popped'})},'drop 25 (1st)':{run:a=>a.event({type:'drop',v:25})},'drop 40':{run:a=>a.event({type:'drop',v:40})},
+  'boost':{run:a=>a.event({type:'boost'})},'jump':{run:a=>a.event({type:'jump'})},'fell':{run:a=>a.event({type:'fell'})},'stuck':{run:a=>a.event({type:'stuck'})},
+  'ui press':{run:a=>a.ui('press')},'ui clear':{run:a=>a.ui('clear')},'ui next':{run:a=>a.ui('next')},'ui locked':{run:a=>a.ui('locked')},
+  'ui undo':{run:a=>a.ui('undo')},'ui toggle':{run:a=>a.ui('toggle')},'ui tool':{run:a=>a.ui('tool')},'ui slip':{run:a=>a.ui('slip')},
+  'inkEmpty':{run:a=>a.inkEmpty()},'draw well':{run:a=>a.draw('well','start',0)},
+  ...Object.fromEntries(['line','wind','rope'].map(tl=>['draw '+tl+' (fast)',{dur:1.2,run:(a,oc)=>{a.draw(tl,'start',0);frames(oc,1,(t)=>a.draw(tl,t>.9?'end':'move',1200));}}])),
+  'draw rope (loop only)':{dur:1,run:(a,oc)=>{a.draw('rope','start',0);frames(oc,.95,()=>a.draw('rope','move',1200));}},
+  'ride boost (loop only)':rideM('pad',400,{boost:1}),
+  'swoop full':{dur:1.4,run:(a,oc)=>{a.transition(0);frames(oc,1.3,t=>a.transition(Math.min(1,t/1.1)));}},
+  'ride road 500':rideM('block',500),'ride road 150':rideM('block',150),'ride wire 400':rideM('line',400),'ride wire+sway':rideM('line',300,{sway:1}),
+  'ride rope':rideM('rope',200),'ride ice 400':rideM('ice',400),'ride air 500':rideM('air',500),'ride wind':rideM('air',100,{wind:1}),'ride boost':rideM('block',400,{boost:1}),
+};
+async function measureOne(t,raw,vol=.7){const dur=t.dur||1.2,oc=new OfflineAudioContext(2,Math.ceil(SR*dur),SR),a=createAudio({context:oc,raw});
+  a.unlock();a.setVolume(raw?.8:vol);t.run(a,oc);const buf=await oc.startRendering();let pk=0,ss=0,n=0;
+  for(let c=0;c<2;c++){const d=buf.getChannelData(c);for(let i=0;i<d.length;i++){const x=Math.abs(d[i]);if(x>pk)pk=x;ss+=x*x;n++;}}
+  // raw: volume 0.8 gives master gain 1.25*0.8^1.6 ≈ 0.875; normalise back to master gain 1
+  const g=raw?1/(1.25*Math.pow(.8,1.6)):1;return{pk:pk*g,rms:Math.sqrt(ss/n)*g};}
+const dB=x=>x>0?(20*Math.log10(x)).toFixed(1):'-inf';
+$('measure').onclick=async()=>{$('mix').innerHTML='rendering…';const rows=[];
+  for(const[name,t]of Object.entries(TESTS)){const r=await measureOne(t,true),f=await measureOne(t,false,.7),f1=await measureOne(t,false,1);rows.push([name,r,f,f1]);}
+  $('mix').innerHTML='<table><tr><th>sound</th><th>raw peak dBFS</th><th>raw rms dBFS</th><th>out peak @0.7</th><th>out peak @1.0</th></tr>'+
+    rows.map(([n,r,f,f1])=>`<tr><td>${n}</td><td>${dB(r.pk)}</td><td>${dB(r.rms)}</td><td>${dB(f.pk)}</td><td class="${f1.pk>.89?'hot':''}">${dB(f1.pk)}</td></tr>`).join('')+'</table>';
+  console.log('[mix]\n'+rows.map(([n,r,f,f1])=>`${n.padEnd(20)} raw ${dB(r.pk).padStart(6)}  rms ${dB(r.rms).padStart(6)}  out@.7 ${dB(f.pk).padStart(6)}  out@1 ${dB(f1.pk).padStart(6)}`).join('\n'));};
+</script>
+</body>
+</html>

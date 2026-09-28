@@ -1,0 +1,17 @@
+{
+  "mode": "scene",
+  "inks": [
+    "Flat Gold",
+    "Bright Red",
+    "Medium Blue"
+  ],
+  "paper": "Natural",
+  "screen": "dots",
+  "cell": 6,
+  "mis": 2.5,
+  "texture": 1,
+  "calm": 0.3,
+  "seed": 21,
+  "scene": "woodblock",
+  "after": "Edo-period ukiyo-e landscapes (Hiroshige, Hokusai)"
+}

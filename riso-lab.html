@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Riso Lab</title>
+<style>
+:root{--paper:#f2ede3;--ink:#23304f;--muted:#6b6f80;--pink:#ff48b0;--line:#d9d2c3;--panel:#faf7f1}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:14px/1.45 ui-sans-serif,system-ui,-apple-system,sans-serif}
+header{padding:20px 20px 0;display:flex;align-items:baseline;gap:14px;flex-wrap:wrap}
+h1{margin:0;font:800 28px/1 "Helvetica Neue",Arial,sans-serif;letter-spacing:-.02em}
+h1 span{color:var(--pink);mix-blend-mode:multiply;margin-left:-.12em;position:relative;top:1px;left:1px}
+header p{margin:0;color:var(--muted)}
+.wrap{display:grid;grid-template-columns:300px 1fr;gap:20px;padding:20px;align-items:start}
+aside{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px;display:grid;gap:14px;position:sticky;top:16px;max-height:calc(100vh - 32px);overflow:auto}
+fieldset{border:0;margin:0;padding:0;display:grid;gap:8px}
+legend{font:700 11px/1 ui-monospace,Menlo,monospace;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);margin-bottom:8px}
+label{display:grid;grid-template-columns:96px 1fr 36px;align-items:center;gap:8px}
+label.wide{grid-template-columns:96px 1fr}
+label output{font:12px ui-monospace,Menlo,monospace;color:var(--muted);text-align:right}
+select,input[type=number],input[type=text]{width:100%;font:inherit;color:inherit;background:#fff;border:1px solid var(--line);border-radius:6px;padding:5px 7px}
+input[type=range]{width:100%;accent-color:var(--ink)}
+.seg{display:grid;grid-template-columns:1fr 1fr;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:0;background:#fff;padding:8px;font:600 13px inherit;color:var(--muted);cursor:pointer}
+.seg button.on{background:var(--ink);color:#fff}
+.btn{font:600 13px inherit;border:1px solid var(--ink);background:#fff;color:var(--ink);border-radius:7px;padding:7px 10px;cursor:pointer}
+.btn.primary{background:var(--ink);color:#fff}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+.ink{display:grid;grid-template-columns:18px 1fr;gap:8px;align-items:center}
+.sw{width:18px;height:18px;border-radius:50%;mix-blend-mode:multiply}
+.note{color:var(--muted);font-size:12px;margin:0}
+.drop{border:1.5px dashed var(--line);border-radius:8px;padding:12px;text-align:center;color:var(--muted);cursor:pointer}
+.drop.over{border-color:var(--pink);color:var(--ink)}
+main{min-width:0}
+.stage{position:relative;border-radius:8px;overflow:hidden;box-shadow:0 1px 2px rgba(0,0,0,.08),0 18px 40px -18px rgba(40,30,20,.45)}
+#out{display:block;width:100%;height:auto;aspect-ratio:16/10;background:#fff}
+#status{position:absolute;right:10px;top:10px;font:12px ui-monospace,Menlo,monospace;background:rgba(255,255,255,.85);padding:3px 8px;border-radius:5px}
+.plates{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-top:14px}
+.plate canvas{width:100%;height:auto;aspect-ratio:16/10;display:block;border-radius:5px;border:1px solid var(--line)}
+.plate div{font:11px ui-monospace,Menlo,monospace;color:var(--muted);margin-top:4px}
+pre{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:10px;font:12px/1.4 ui-monospace,Menlo,monospace;overflow:auto;margin:14px 0 0}
+[hidden]{display:none!important}
+@media (max-width:820px){.wrap{grid-template-columns:1fr}aside{position:static;max-height:none}}
+</style>
+</head>
+<body>
+<header><h1>Riso<span>Lab</span></h1><p>Background printer for the game. Choose a scene recipe or feed in a public-domain artwork.</p></header>
+<div class="wrap">
+<aside>
+  <div class="seg"><button data-mode="scene" class="on">Scene</button><button data-mode="art">Artwork</button></div>
+
+  <fieldset id="sceneBox"><legend>Scene</legend>
+    <label class="wide">Recipe<select data-k="theme"></select></label>
+    <p class="note" id="after"></p>
+    <label class="wide">Seed<div class="row" style="flex-wrap:nowrap"><input type="number" data-k="seed" min="1"><button class="btn" id="reroll" title="New seed">🎲</button></div></label>
+  </fieldset>
+
+  <fieldset id="artBox" hidden><legend>Artwork</legend>
+    <label class="wide">Library<select id="library"><option value="">Choose from art/…</option></select></label>
+    <div class="drop" id="drop">Drop an image here, or click to choose one</div>
+    <label class="wide">Color<select data-k="method"><option value="match">Match colors</option><option value="tone">Tone map (recolor)</option></select></label>
+    <label class="wide" style="grid-template-columns:auto 1fr"><input type="checkbox" data-k="agedPaper">Treat aged paper as white</label>
+    <label>Zoom<input type="range" data-k="zoom" min="1" max="2.5" step=".05"><output></output></label>
+    <label>Pan across<input type="range" data-k="fx" min="0" max="1" step=".02"><output></output></label>
+    <label>Pan down<input type="range" data-k="fy" min="0" max="1" step=".02"><output></output></label>
+    <input type="file" id="file" accept="image/*" hidden>
+    <label>Contrast<input type="range" data-k="contrast" min=".5" max="2" step=".05"><output></output></label>
+    <label>Brightness<input type="range" data-k="brightness" min="-.4" max=".4" step=".02"><output></output></label>
+    <label>Saturation<input type="range" data-k="saturation" min="0" max="2" step=".05"><output></output></label>
+    <label>Flatten<input type="range" data-k="posterize" min="0" max="8" step="1"><output></output></label>
+    <label>Soften<input type="range" data-k="soften" min="0" max="6" step="1"><output></output></label>
+    <button class="btn" id="suggest">Suggest inks for this image</button>
+  </fieldset>
+
+  <fieldset><legend>Inks</legend>
+    <label class="wide">Preset<select id="preset"><option value="">Choose…</option></select></label>
+    <div class="ink"><span class="sw"></span><select data-ink="0"></select></div>
+    <div class="ink"><span class="sw"></span><select data-ink="1"></select></div>
+    <div class="ink" id="ink3"><span class="sw"></span><select data-ink="2"></select></div>
+    <label class="wide">Drums<select data-k="count"><option value="3">3 inks</option><option value="2">2 inks</option></select></label>
+    <label class="wide">Paper<select data-k="paper"></select></label>
+  </fieldset>
+
+  <fieldset><legend>Print</legend>
+    <label class="wide">Screen<select data-k="screen"><option value="dots">Halftone dots</option><option value="grain">Grain</option><option value="solid">Solid</option></select></label>
+    <label>Dot size<input type="range" data-k="cell" min="3" max="14" step=".5"><output></output></label>
+    <label>Misregister<input type="range" data-k="mis" min="0" max="8" step=".5"><output></output></label>
+    <label>Texture<input type="range" data-k="texture" min="0" max="1.6" step=".1"><output></output></label>
+    <label>Clear center<input type="range" data-k="calm" min="0" max="1" step=".05"><output></output></label>
+    <p class="note">“Clear center” fades ink out of the middle of the page so the level stays readable.</p>
+  </fieldset>
+
+  <fieldset><legend>Output</legend>
+    <label class="wide">Name<input type="text" id="name" value="bg-01"></label>
+    <div class="row"><button class="btn primary" id="save">Save to project</button><button class="btn" id="export">Download PNG</button></div>
+    <p class="note" id="saved"></p>
+  </fieldset>
+</aside>
+<main>
+  <div class="stage"><canvas id="out" width="1600" height="1000"></canvas><div id="status"></div></div>
+  <div class="plates" id="plates"></div>
+  <pre id="recipe"></pre>
+</main>
+</div>
+<script src="riso.js"></script>
+<script>
+const PW=1600,PH=1000,{INKS,PAPERS,PRESETS,SCENES}=Riso;
+const st={mode:'scene',theme:'woodblock',seed:7,calm:.3,inks:[...PRESETS['Ukiyo-e']],count:3,paper:'Natural',screen:'dots',cell:6,mis:2.5,texture:1,
+  contrast:1.1,brightness:0,saturation:1.1,posterize:0,soften:1,art:null,agedPaper:true,zoom:1,fx:.5,fy:.5,method:'match'};
+let artImg=null,sceneCache={},sepCache={};
+const $=s=>document.querySelector(s),$$=s=>[...document.querySelectorAll(s)];
+const opt=(sel,items)=>items.forEach(([v,t])=>sel.add(new Option(t,v)));
+
+opt($('[data-k=theme]'),Object.entries(SCENES).map(([k,s])=>[k,s.name]));
+opt($('[data-k=paper]'),Object.keys(PAPERS).map(k=>[k,k]));
+opt($('#preset'),Object.keys(PRESETS).map(k=>[k,k]));
+$$('[data-ink]').forEach(s=>opt(s,Object.keys(INKS).map(k=>[k,k])));
+
+function sync(){
+  $$('[data-k]').forEach(el=>{if(el.type==='checkbox'){el.checked=!!st[el.dataset.k];return;}el.value=st[el.dataset.k];const o=el.parentElement.querySelector('output');if(o)o.textContent=(+st[el.dataset.k]).toFixed(el.step<1?2:0).replace(/\.?0+$/,'')||'0';});
+  $$('[data-ink]').forEach(el=>{el.value=st.inks[el.dataset.ink];el.previousElementSibling.style.background=INKS[st.inks[el.dataset.ink]];});
+  $$('.seg button').forEach(b=>b.classList.toggle('on',b.dataset.mode===st.mode));
+  $('#sceneBox').hidden=st.mode!=='scene';$('#artBox').hidden=st.mode!=='art';$('#ink3').hidden=+st.count===2;
+  $('#after').textContent='After '+SCENES[st.theme].after+'.';
+  $('.drop').textContent=st.art?`Using ${st.art}. Drop or click to replace.`:'Drop an image here, or click to choose one';}
+
+$$('[data-k]').forEach(el=>el.addEventListener('input',()=>{const v=el.type==='checkbox'?el.checked:el.value;st[el.dataset.k]=typeof v==='boolean'||isNaN(+v)||v===''?v:+v;sync();schedule();}));
+$$('[data-ink]').forEach(el=>el.addEventListener('input',()=>{st.inks[el.dataset.ink]=el.value;sync();schedule();}));
+$('#preset').addEventListener('input',e=>{if(!e.target.value)return;st.inks=[...PRESETS[e.target.value]];e.target.value='';sync();schedule();});
+$$('.seg button').forEach(b=>b.addEventListener('click',()=>{st.mode=b.dataset.mode;sync();schedule();}));
+$('#reroll').addEventListener('click',()=>{st.seed=1+Math.floor(Math.random()*9999);sync();schedule();});
+
+function loadArt(src,name){return new Promise((res,rej)=>{const im=new Image();im.onload=()=>{artImg=im;st.art=name;st.mode='art';sync();schedule();res();};im.onerror=rej;im.src=src;});}
+const drop=$('#drop');
+drop.addEventListener('click',()=>$('#file').click());
+$('#file').addEventListener('change',e=>{const f=e.target.files[0];if(f)loadArt(URL.createObjectURL(f),f.name);});
+['dragover','dragenter'].forEach(t=>document.addEventListener(t,e=>{e.preventDefault();drop.classList.add('over');}));
+['dragleave','drop'].forEach(t=>document.addEventListener(t,e=>{e.preventDefault();drop.classList.remove('over');}));
+document.addEventListener('drop',e=>{const f=e.dataTransfer.files[0];if(f&&f.type.startsWith('image/'))loadArt(URL.createObjectURL(f),f.name);});
+$('#suggest').addEventListener('click',()=>{if(!artImg)return;status('Testing ink combinations…');setTimeout(()=>{
+  const small=Riso.fitImage(artImg,320,200,st);const best=Riso.suggestInks(small,PAPERS[st.paper],+st.count);st.inks=[...best,...st.inks].slice(0,3);sync();schedule();},20);});
+
+const status=t=>$('#status').textContent=t;
+function densities(inks){
+  if(st.mode==='scene'){const k=[st.theme,st.seed,st.calm].join();if(sceneCache.k!==k)sceneCache={k,d:Riso.renderScene(st.theme,st.seed,PW,PH,st.calm)};return Riso.mergeTo(sceneCache.d,inks.length);}
+  if(!artImg)return null;
+  const k=[st.art,inks,st.paper,st.contrast,st.brightness,st.saturation,st.posterize,st.soften,st.calm,st.method,st.agedPaper,st.zoom,st.fx,st.fy].join();
+  if(sepCache.k!==k){const d=Riso.separate(Riso.fitImage(artImg,PW,PH,st),inks,PAPERS[st.paper],st);d.forEach(x=>Riso.applyCalm(x,PW,PH,st.calm));sepCache={k,d};}
+  return sepCache.d;}
+
+let timer;
+function schedule(){clearTimeout(timer);status('Printing…');timer=setTimeout(render,60);}
+function render(){
+  const t0=performance.now(),names=st.inks.slice(0,+st.count),inks=names.map(n=>INKS[n]),dens=densities(inks);
+  const g=$('#out').getContext('2d');
+  if(!dens){g.fillStyle=PAPERS[st.paper];g.fillRect(0,0,PW,PH);status('Waiting for an image');return;}
+  const layers=Riso.layersFor(dens,inks,{seed:st.seed,mis:st.mis,cell:st.cell,screen:st.screen});
+  g.putImageData(Riso.print({w:PW,h:PH,paper:PAPERS[st.paper],layers,texture:st.texture,seed:st.seed}),0,0);
+  plates(dens,names);
+  $('#recipe').textContent=JSON.stringify(recipe(),null,1).replace(/\n\s*(?=[\]\d"])/g,' ');
+  status(`Printed in ${Math.round(performance.now()-t0)} ms`);}
+
+function plates(dens,names){const box=$('#plates');box.innerHTML='';const P=PAPERS[st.paper];
+  dens.forEach((d,i)=>{const w=320,h=200,cv=document.createElement('canvas');cv.width=w;cv.height=h;const g=cv.getContext('2d'),img=g.createImageData(w,h),K=INKS[names[i]],kr=parseInt(K.slice(1,3),16),kg=parseInt(K.slice(3,5),16),kb=parseInt(K.slice(5,7),16),pr=parseInt(P.slice(1,3),16),pg=parseInt(P.slice(3,5),16),pb=parseInt(P.slice(5,7),16);
+    for(let y=0;y<h;y++)for(let x=0;x<w;x++){const v=d[((y*PH/h)|0)*PW+((x*PW/w)|0)],j=(y*w+x)*4;img.data[j]=pr+(kr-pr)*v;img.data[j+1]=pg+(kg-pg)*v;img.data[j+2]=pb+(kb-pb)*v;img.data[j+3]=255;}
+    g.putImageData(img,0,0);const el=document.createElement('div');el.className='plate';el.append(cv);const lab=document.createElement('div');lab.textContent=`Drum ${i+1}: ${names[i]}`;el.append(lab);box.append(el);});}
+
+function recipe(){const r={mode:st.mode,inks:st.inks.slice(0,+st.count),paper:st.paper,screen:st.screen,cell:st.cell,mis:st.mis,texture:st.texture,calm:st.calm,seed:st.seed};
+  if(st.mode==='scene'){r.scene=st.theme;r.after=SCENES[st.theme].after;}else Object.assign(r,{art:st.art,method:st.method,agedPaper:st.agedPaper,zoom:st.zoom,fx:st.fx,fy:st.fy,contrast:st.contrast,brightness:st.brightness,saturation:st.saturation,posterize:st.posterize,soften:st.soften});return r;}
+
+const fileName=()=>($('#name').value||'bg').toLowerCase().replace(/[^a-z0-9_-]/g,'');
+$('#export').addEventListener('click',()=>$('#out').toBlob(b=>{const a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=fileName()+'.png';a.click();}));
+async function save(name=fileName()){
+  const png=await new Promise(r=>$('#out').toBlob(r,'image/png'));
+  try{const a=await fetch(`/save?name=${name}&ext=png`,{method:'POST',body:png});const b=await fetch(`/save?name=${name}&ext=json`,{method:'POST',body:JSON.stringify(recipe(),null,2)});
+    if(!a.ok||!b.ok)throw 0;$('#saved').textContent=`Saved backgrounds/${name}.png and .json`;return name;}
+  catch(e){$('#saved').textContent='Saving needs tools/serve.py. Use Download instead.';return null;}}
+$('#save').addEventListener('click',()=>save());
+
+// The art/ library: parse the static server's directory listing.
+fetch('art/').then(r=>r.text()).then(html=>{const files=[...html.matchAll(/href="([^"]+\.(?:jpe?g|png|webp))"/gi)].map(m=>decodeURIComponent(m[1]));
+  opt($('#library'),files.map(f=>['art/'+f,f.replace(/\.[a-z]+$/i,'').replace(/-/g,' ')]));}).catch(()=>{});
+$('#library').addEventListener('input',e=>{if(e.target.value)loadArt(e.target.value,e.target.value.split('/').pop());});
+
+// Hooks for driving the lab from scripts.
+window.lab={st,set(p){Object.assign(st,p);sync();clearTimeout(timer);render();},save,loadArt};
+const q=new URLSearchParams(location.search);if(q.get('art'))loadArt(q.get('art'),q.get('art').split('/').pop());
+sync();schedule();
+</script>
+</body>
+</html>

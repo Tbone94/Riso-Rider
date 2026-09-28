@@ -1,0 +1,25 @@
+{
+  "mode": "art",
+  "inks": [
+    "Aqua",
+    "Flat Gold",
+    "Federal Blue"
+  ],
+  "paper": "Natural",
+  "screen": "dots",
+  "cell": 6,
+  "mis": 2.5,
+  "texture": 1,
+  "calm": 0,
+  "seed": 7,
+  "art": "hokusai-great-wave.jpg",
+  "agedPaper": true,
+  "zoom": 1,
+  "fx": 0.5,
+  "fy": 0.5,
+  "contrast": 1.1,
+  "brightness": 0,
+  "saturation": 1.1,
+  "posterize": 0,
+  "soften": 1
+}

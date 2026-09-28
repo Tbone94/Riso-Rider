@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Drift: Ride Mock</title>
+<style>
+:root{--paper:#f2ede3;--light:#ffb511;--mid:#ff6c2f;--key:#3d5588}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--paper);color:var(--key);font:14px/1.4 "Helvetica Neue",Arial,sans-serif;display:flex;justify-content:center;overflow:hidden;
+  background-image:radial-gradient(rgba(0,0,0,.035) 1px,transparent 1px);background-size:5px 5px}
+#app{width:min(100vw - 24px,(100vh - 130px)*1.6);display:flex;flex-direction:column;gap:10px;padding:12px 0}
+header{display:flex;align-items:baseline;gap:12px}
+h1{margin:0;font:900 30px/1 "Helvetica Neue",Arial;text-shadow:2px 1.5px 0 var(--mid);letter-spacing:-.02em}
+#mode{font:700 12px ui-monospace,Menlo,monospace;letter-spacing:.3em}
+#stage{position:relative;width:100%;aspect-ratio:16/10;overflow:hidden;border-radius:4px;background:var(--paper);box-shadow:0 16px 34px -18px rgba(40,30,20,.5);touch-action:none}
+#stage canvas{position:absolute;inset:0;width:100%;height:100%}
+#bg{transform:scale(1.08);transition:opacity .3s}
+#fg{mix-blend-mode:multiply}
+.building #bg{opacity:0}
+#wipe{position:absolute;inset:0;pointer-events:none;background:var(--mid);background-image:radial-gradient(var(--key) 2px,transparent 2.4px);background-size:9px 9px;mix-blend-mode:multiply;clip-path:circle(0% at 50% 50%)}
+#wipe.go{animation:wipe .7s ease-in-out}
+@keyframes wipe{0%{clip-path:circle(0% at 12% 55%)}50%{clip-path:circle(150% at 12% 55%)}100%{clip-path:circle(0% at 50% 42%)}}
+#msg{position:absolute;left:50%;top:18%;transform:translateX(-50%);font:900 30px "Helvetica Neue",Arial;color:var(--key);text-shadow:3px 2px 0 var(--mid);opacity:0;pointer-events:none;white-space:nowrap}
+#msg.show{animation:msg 1.3s}
+@keyframes msg{10%,70%{opacity:1}100%{opacity:0}}
+footer{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.btn{height:42px;padding:0 16px;border:2px solid var(--key);background:var(--paper);color:var(--key);font:700 13px "Helvetica Neue",Arial;letter-spacing:.06em;text-transform:uppercase;cursor:pointer;border-radius:3px;touch-action:none;user-select:none}
+.btn.primary{background:var(--mid);box-shadow:3px 2.5px 0 var(--key)}
+.keys{font:12px ui-monospace,Menlo,monospace;opacity:.75;margin-left:auto}
+.touch{display:none}
+@media (pointer:coarse){.touch{display:inline-block}.keys{display:none}}
+</style>
+</head>
+<body>
+<div id="app">
+  <header><h1>Drift</h1><span id="mode"></span></header>
+  <div id="stage" class="building"><canvas id="bg"></canvas><canvas id="fg"></canvas><div id="wipe"></div><div id="msg"></div></div>
+  <footer>
+    <button class="btn primary" id="toggle"></button>
+    <button class="btn touch" data-k="left">◀</button><button class="btn touch" data-k="right">▶</button><button class="btn touch" data-k="jump">Jump</button>
+    <span class="keys" id="keys"></span>
+  </footer>
+</div>
+<script src="riso.js"></script>
+<script>
+(()=>{
+const W=800,H=500,TAU=Math.PI*2,HOR=205,F=340,G=900;
+const INK={light:'#ffb511',mid:'#ff6c2f',key:'#3d5588'};
+// The level as built in side view. x is distance along the page, y is height (down).
+// Lines are narrow ribbons in first person, so drawn lines become tightropes.
+const TRACK=[
+  {x0:0,x1:220,y0:300,y1:300,kind:'block',w:44},
+  {x0:220,x1:560,y0:300,y1:360,kind:'line',w:20},
+  {x0:680,x1:900,y0:345,y1:345,kind:'block',w:44},
+  {x0:900,x1:1040,y0:372,y1:372,kind:'rope',w:34},
+  {x0:1100,x1:1380,y0:250,y1:250,kind:'block',w:44},
+  {x0:1380,x1:1720,y0:250,y1:330,kind:'line',w:13},
+  {x0:1800,x1:2200,y0:320,y1:320,kind:'block',w:44},
+];
+const GOAL={x:2080,r:50},CHECK=TRACK.filter(p=>p.kind==='block').map(p=>p.x0);
+const piece=x=>TRACK.find(p=>x>=p.x0&&x<p.x1)||null;
+const groundY=(p,x)=>p.y0+(p.y1-p.y0)*(x-p.x0)/(p.x1-p.x0);
+
+const $=s=>document.querySelector(s),stage=$('#stage'),bg=$('#bg'),fg=$('#fg'),g=fg.getContext('2d');
+let mode='build',px=1,speck=null,pat=null;
+const keys={left:0,right:0,up:0,down:0,jump:0};
+let P,shake=0,msgT=0;
+function reset(atX=0){const p=piece(atX+1);P={x:atX+20,y:groundY(p,atX+20),vx:210,vy:0,z:0,vz:0,ground:true,roll:0,t:0,won:false};}
+
+// ---------- riso backdrop, printed once ----------
+function ridge(r,y,rough,depth){let p=[[-20,y],[820,y]],amp=840*rough;for(let d=0;d<depth;d++){const o=[];for(let i=0;i<p.length-1;i++)o.push(p[i],[(p[i][0]+p[i+1][0])/2,(p[i][1]+p[i+1][1])/2+(r()+r()+r()-1.5)*amp]);o.push(p[p.length-1]);p=o;amp*=.55;}return p;}
+Riso.SCENES.ride={name:'Ride',after:'1930s park posters, seen from the road',draw(c,r){const[L,M,D]=c,A=a=>`rgba(0,0,0,${a})`;
+  let gr=L.createLinearGradient(0,0,0,HOR);gr.addColorStop(0,A(.1));gr.addColorStop(1,A(.7));L.fillStyle=gr;L.fillRect(0,0,W,HOR);
+  L.save();L.beginPath();L.rect(0,0,W,HOR);L.clip();L.fillStyle=A(.28);for(let i=0;i<20;i+=2){const a=i/20*TAU;L.beginPath();L.moveTo(560,150);L.arc(560,150,900,a,a+TAU/20);L.closePath();L.fill();}L.restore();
+  L.fillStyle=A(1);L.beginPath();L.arc(560,150,54,0,TAU);L.fill();
+  const fill=(k,p,a)=>{k.fillStyle=A(a);k.beginPath();k.moveTo(p[0][0],p[0][1]);p.forEach(q=>k.lineTo(q[0],q[1]));k.lineTo(820,HOR);k.lineTo(-20,HOR);k.closePath();k.fill();};
+  fill(M,ridge(r,HOR-55,.08,6),.45);fill(M,ridge(r,HOR-25,.06,6),.5);fill(D,ridge(r,HOR-25,.06,6),.3);fill(D,ridge(r,HOR-8,.03,6),.55);
+  // the valley far below the ribbons, with perspective bands
+  gr=M.createLinearGradient(0,HOR,0,H);gr.addColorStop(0,A(.5));gr.addColorStop(1,A(.2));M.fillStyle=gr;M.fillRect(0,HOR,W,H-HOR);
+  L.fillStyle=A(.35);L.fillRect(0,HOR,W,H-HOR);
+  D.strokeStyle=A(.35);D.lineWidth=1.2;for(let i=-16;i<=16;i++){D.beginPath();D.moveTo(400,HOR);D.lineTo(400+i*90,H+40);D.stroke();}
+  M.save();M.globalCompositeOperation='destination-out';for(let k=1;k<14;k++){const y=HOR+Math.pow(k/13,2.2)*(H-HOR);M.fillRect(0,y,W,1+k*.25);}M.restore();
+}};
+function printBackdrop(){const pw=Math.min(1600,fg.width),ph=Math.round(pw*H/W),inks=[INK.light,INK.mid,INK.key];
+  const dens=Riso.renderScene('ride',11,pw,ph,0),img=Riso.print({w:pw,h:ph,paper:'#f2ede3',layers:Riso.layersFor(dens,inks,{seed:11,cell:6*pw/1600,mis:2.5*pw/1600}),texture:1,seed:11});
+  bg.width=pw;bg.height=ph;bg.getContext('2d').putImageData(img,0,0);}
+
+function resize(){const r=stage.getBoundingClientRect(),dpr=Math.min(devicePixelRatio||1,2),pw=Math.round(r.width*dpr);if(fg.width===pw)return;
+  fg.width=pw;fg.height=Math.round(r.height*dpr);px=pw/W;
+  const c=document.createElement('canvas');c.width=fg.width;c.height=fg.height;const x=c.getContext('2d'),id=x.createImageData(c.width,c.height);
+  for(let i=3;i<id.data.length;i+=4)id.data[i]=Math.random()<.18?60+Math.random()*150:0;x.putImageData(id,0,0);speck=c;
+  const dot=(col,step,rad)=>{const t=document.createElement('canvas');t.width=t.height=step*2;const y=t.getContext('2d');y.fillStyle=col;[[step/2,step/2],[step*1.5,step*1.5]].forEach(([a,b])=>{y.beginPath();y.arc(a,b,rad,0,TAU);y.fill();});return g.createPattern(t,'repeat');};
+  pat={key:dot(INK.key,5,1.6),mid:dot(INK.mid,6,1.9),light:dot(INK.light,6,2.2)};
+  setTimeout(printBackdrop,20);}
+
+// ---------- ride physics (1D track + lateral lean) ----------
+function update(dt){const p=P;p.t+=dt;
+  const cur=piece(p.x),target=keys.up?420:keys.down?120:230;p.vx+=(target-p.vx)*.8*dt;
+  p.vz+=((keys.right-keys.left)*650-p.vz*3)*dt;
+  if(cur&&cur.kind==='line'&&p.ground)p.vz+=Math.sin(p.t*1.9)*95*dt;           // tightropes sway
+  p.z+=p.vz*dt;
+  if(p.ground){
+    // Rolling off an edge (or off the side of a tightrope) carries the slope's speed into the fall.
+    if(!cur||Math.abs(p.z)>cur.w){p.ground=false;p.vy=(p.slope||0)*p.vx+(cur?40:0);}
+    else{const slope=(cur.y1-cur.y0)/(cur.x1-cur.x0);p.slope=slope;p.vx+=G*slope*.5*dt;p.y=groundY(cur,p.x);
+      if(cur.kind==='rope'){p.ground=false;p.vy=-560;flash('BOING');}
+      else if(keys.jump){p.ground=false;p.vy=-430+slope*p.vx;}}}
+  else{const y0=p.y;p.vy+=G*dt;p.y+=p.vy*dt;const q=piece(p.x);
+    if(q&&p.vy>0&&p.y>=groundY(q,p.x)&&y0<=groundY(q,p.x)+6&&Math.abs(p.z)<q.w){
+      if(q.kind==='rope'){p.y=groundY(q,p.x);p.vy=-Math.max(560,p.vy*1.02);flash('BOING');}
+      else{shake=Math.min(9,p.vy/70);p.y=groundY(q,p.x);p.vy=0;p.ground=true;}}}
+  keys.jump=0;p.x+=p.vx*dt;p.roll+=p.vx*dt;
+  if(!p.won&&p.x>=GOAL.x){if(Math.abs(p.z)<GOAL.r*.8){p.won=true;flash('THROUGH THE RING!');setTimeout(()=>{reset(0);},2200);}}
+  if(p.y>groundY(TRACK[0],0)+420){flash('FELL!');reset(CHECK.filter(c=>c<=p.x).pop()||0);}
+  shake*=Math.pow(.02,dt);}
+
+// ---------- first-person render ----------
+function proj(X,Y,Z,cam){const d=X-cam.x;if(d<2)return null;const s=F/d;return[W/2+(Z-cam.z)*s,HOR+(Y-cam.y)*s,s];}
+function quad(a,b,c,d){g.beginPath();g.moveTo(a[0],a[1]);g.lineTo(b[0],b[1]);g.lineTo(c[0],c[1]);g.lineTo(d[0],d[1]);g.closePath();g.fill();}
+function drawRide(t){
+  const p=P,cam={x:p.x-50,y:p.y-32+(p.ground?Math.sin(p.roll/18)*1.2:0)+(Math.random()-.5)*shake,z:p.z*.9};
+  bg.style.transform=`scale(1.08) translate(${(-p.z*.25).toFixed(1)}px,${((p.y-300)*-.04).toFixed(1)}px)`;
+  // sample the track ahead with quadratic spacing, then paint far → near
+  const S=[];for(let i=0;i<=110;i++){const X=cam.x+6+Math.pow(i/110,2)*1500,pc=piece(X);S.push({X,pc,Y:pc?groundY(pc,X):0});}
+  let ringDrawn=false;
+  for(let i=S.length-2;i>=0;i--){const A=S[i],B=S[i+1];
+    if(!ringDrawn&&B.X>=GOAL.x&&A.X<GOAL.x){drawRing(cam,t);ringDrawn=true;}
+    if(!A.pc||A.pc!==B.pc)continue;const w=A.pc.w,k=A.pc.kind;
+    const aL=proj(A.X,A.Y,-w,cam),aR=proj(A.X,A.Y,w,cam),bL=proj(B.X,B.Y,-w,cam),bR=proj(B.X,B.Y,w,cam);if(!aL||!bL)continue;
+    // underside thickness so the ribbon reads as a solid strip
+    const th=k==='block'?16:6,aLd=proj(A.X,A.Y+th,-w,cam),aRd=proj(A.X,A.Y+th,w,cam),bLd=proj(B.X,B.Y+th,-w,cam),bRd=proj(B.X,B.Y+th,w,cam);
+    g.fillStyle=pat.mid;quad(aL,bL,bLd,aLd);quad(aR,bR,bRd,aRd);
+    if(k==='rope'){g.fillStyle=pat.mid;quad(aL,aR,bR,bL);g.strokeStyle=INK.key;g.lineWidth=Math.max(1,2*aL[2]);g.setLineDash([6,5]);
+      g.beginPath();[-w*.6,0,w*.6].forEach(z=>{const a=proj(A.X,A.Y,z,cam),b=proj(B.X,B.Y,z,cam);g.moveTo(a[0],a[1]);g.lineTo(b[0],b[1]);});g.stroke();g.setLineDash([]);continue;}
+    const stripe=Math.floor(A.X/(k==='line'?24:34))%2;
+    g.fillStyle=INK.mid;g.save();g.translate(2,1.5);quad(aL,aR,bR,bL);g.restore();
+    g.fillStyle=stripe?INK.key:pat.key;quad(aL,aR,bR,bL);
+    if(k==='block'&&Math.floor(A.X/110)!==Math.floor(B.X/110)){[-w-5,w+5].forEach(z=>{const f=proj(B.X,B.Y,z,cam),top=proj(B.X,B.Y-30,z,cam);if(!f)return;
+      g.strokeStyle=INK.key;g.lineWidth=Math.max(1,2.4*f[2]);g.beginPath();g.moveTo(f[0],f[1]);g.lineTo(top[0],top[1]);g.stroke();
+      g.fillStyle=INK.mid;g.beginPath();g.moveTo(top[0],top[1]);g.lineTo(top[0]+12*f[2]*Math.sign(z),top[1]+4*f[2]);g.lineTo(top[0],top[1]+8*f[2]);g.fill();});}
+  }
+  if(!ringDrawn)drawRing(cam,t);
+  // gap warning: the front edge of the next ribbon across a gap
+  const next=TRACK.find(q=>q.x0>p.x+20&&q.x0<p.x+420&&!piece(q.x0-2));
+  if(next&&p.ground){const e=proj(next.x0,next.y0-40,0,cam);if(e){g.fillStyle=INK.mid;g.font=`900 ${Math.min(34,Math.max(12,18*e[2]))}px Helvetica Neue,Arial`;g.textAlign='center';g.fillText('JUMP',e[0],e[1]);}}
+  // speed lines
+  if(p.vx>330){g.strokeStyle=INK.mid;g.lineWidth=1.5;for(let i=0;i<14;i++){const a=i/14*TAU+t*.3,r0=250+((t*900+i*97)%160);g.globalAlpha=.6;g.beginPath();g.moveTo(W/2+Math.cos(a)*r0,HOR+Math.sin(a)*r0*.7);g.lineTo(W/2+Math.cos(a)*(r0+40),HOR+Math.sin(a)*(r0+40)*.7);g.stroke();}g.globalAlpha=1;}
+  // the ball's own nose, rolling under you
+  const nx=W/2-p.z*.4,ny=H+95+(p.ground?0:-8);g.fillStyle=pat.mid;g.beginPath();g.arc(nx,ny,150,0,TAU);g.fill();
+  g.save();g.beginPath();g.arc(nx,ny,150,0,TAU);g.clip();g.fillStyle=INK.mid;for(let k=0;k<6;k++){const yy=ny-150+((p.roll*1.4+k*50)%300);g.fillRect(nx-150,yy,300,9);}g.restore();
+  g.strokeStyle=INK.key;g.lineWidth=3;g.beginPath();g.arc(nx+3,ny-2,150,0,TAU);g.stroke();
+  drawMini(p);}
+function drawRing(cam,t){const pc=piece(GOAL.x);if(!pc)return;const c=proj(GOAL.x,groundY(pc,GOAL.x)-GOAL.r,0,cam);if(!c)return;const r=GOAL.r*c[2];
+  g.fillStyle=pat.light;g.beginPath();g.arc(c[0],c[1],r*1.35,0,TAU);g.arc(c[0],c[1],r,0,TAU,true);g.fill();
+  g.strokeStyle=INK.key;g.lineWidth=Math.max(2,8*c[2]);g.beginPath();g.arc(c[0],c[1],r,0,TAU);g.stroke();
+  g.strokeStyle=INK.mid;g.lineWidth=Math.max(1,3*c[2]);g.setLineDash([8*c[2]+2,8*c[2]+2]);g.lineDashOffset=-t*30;g.beginPath();g.arc(c[0],c[1],r*1.25,0,TAU);g.stroke();g.setLineDash([]);}
+function drawMini(p){const x0=W-230,y0=H-92,sx=210/2200,sy=.35;g.fillStyle='rgba(242,237,227,.9)';g.fillRect(x0-8,y0-8,228,80);g.strokeStyle=INK.key;g.lineWidth=1.5;g.strokeRect(x0-8,y0-8,228,80);
+  const m=(x,y)=>[x0+x*sx,y0+(y-220)*sy];TRACK.forEach(q=>{const a=m(q.x0,q.y0),b=m(q.x1,q.y1);g.strokeStyle=q.kind==='rope'?INK.mid:INK.key;g.lineWidth=q.kind==='block'?4:2;g.setLineDash(q.kind==='rope'?[3,2]:[]);g.beginPath();g.moveTo(a[0],a[1]);g.lineTo(b[0],b[1]);g.stroke();});g.setLineDash([]);
+  const r=m(GOAL.x,piece(GOAL.x).y0-GOAL.r);g.strokeStyle=INK.mid;g.beginPath();g.arc(r[0],r[1],4,0,TAU);g.stroke();
+  const me=m(p.x,p.y-9);g.fillStyle=INK.mid;g.beginPath();g.arc(me[0],me[1],4,0,TAU);g.fill();}
+
+// ---------- side-view build screen ----------
+function drawBuild(t){const s=.36,oy=-10,m=(x,y)=>[20+x*s,oy+(y-120)*1.4*s*1.9];
+  g.fillStyle=INK.key;g.font='900 22px Helvetica Neue,Arial';g.textAlign='left';g.fillText('BUILD',24,40);
+  g.font='12px ui-monospace,Menlo,monospace';g.fillStyle=INK.key;g.fillText('side view · ink left: 0%',24,60);
+  TRACK.forEach(q=>{const a=m(q.x0,q.y0),b=m(q.x1,q.y1);
+    if(q.kind==='block'){g.fillStyle=INK.mid;g.fillRect(a[0]+3,a[1]+2.5,b[0]-a[0],12);g.fillStyle=INK.key;g.fillRect(a[0],a[1],b[0]-a[0],12);}
+    else if(q.kind==='rope'){g.strokeStyle=INK.key;g.lineWidth=3;g.setLineDash([5,3]);g.beginPath();g.moveTo(a[0],a[1]);g.quadraticCurveTo((a[0]+b[0])/2,a[1]+14,b[0],b[1]);g.stroke();g.setLineDash([]);}
+    else{g.lineCap='round';g.strokeStyle=INK.mid;g.lineWidth=5;g.beginPath();g.moveTo(a[0]+1.6,a[1]+1.3);g.lineTo(b[0]+1.6,b[1]+1.3);g.stroke();g.strokeStyle=INK.key;g.beginPath();g.moveTo(a[0],a[1]);g.lineTo(b[0],b[1]);g.stroke();}});
+  // gaps where the ink ran out
+  for(let i=0;i<TRACK.length-1;i++){const a=TRACK[i],b=TRACK[i+1];if(b.x0-a.x1<30)continue;const p0=m(a.x1,a.y1),p1=m(b.x0,b.y0),mx=(p0[0]+p1[0])/2;
+    g.strokeStyle=INK.mid;g.lineWidth=2;g.setLineDash([3,5]);g.lineDashOffset=-t*20;g.beginPath();g.moveTo(p0[0],p0[1]);g.quadraticCurveTo(mx,Math.min(p0[1],p1[1])-70,p1[0],p1[1]);g.stroke();g.setLineDash([]);
+    g.fillStyle=INK.mid;g.font='900 13px Helvetica Neue,Arial';g.textAlign='center';g.fillText('JUMP IT',mx,Math.min(p0[1],p1[1])-44);}
+  const gr=m(GOAL.x,320-GOAL.r);g.strokeStyle=INK.key;g.lineWidth=3;g.beginPath();g.arc(gr[0],gr[1],18,0,TAU);g.stroke();
+  const st=m(40,291);g.fillStyle=INK.mid;g.beginPath();g.arc(st[0],st[1],7,0,TAU);g.fill();g.strokeStyle=INK.key;g.lineWidth=2;g.beginPath();g.arc(st[0]+1.4,st[1]-1,7,0,TAU);g.stroke();
+  g.fillStyle=INK.key;g.font='14px Helvetica Neue,Arial';g.textAlign='left';
+  g.fillText('Out of ink? Leave gaps and jump them. Thin lines become tightropes when you ride.',24,H-24);}
+
+// ---------- loop + input ----------
+function flash(t){const el=$('#msg');el.textContent=t;el.classList.remove('show');void el.offsetWidth;el.classList.add('show');}
+function setMode(m){mode=m;stage.classList.toggle('building',m==='build');$('#mode').textContent=m==='build'?'SIDE VIEW':'FIRST PERSON';
+  $('#toggle').textContent=m==='build'?'Ride it ▶':'◀ Back to build';$('#keys').textContent=m==='build'?'enter to ride':'← → steer · space jump · ↑ faster · ↓ slower';
+  if(m==='ride'){reset(0);const w=$('#wipe');w.classList.remove('go');void w.offsetWidth;w.classList.add('go');}}
+$('#toggle').onclick=()=>setMode(mode==='build'?'ride':'build');
+const map={ArrowLeft:'left',a:'left',ArrowRight:'right',d:'right',ArrowUp:'up',w:'up',ArrowDown:'down',s:'down'};
+addEventListener('keydown',e=>{if(e.key==='Enter'){setMode(mode==='build'?'ride':'build');return;}if(e.key===' '){e.preventDefault();keys.jump=1;}if(map[e.key])keys[map[e.key]]=1;});
+addEventListener('keyup',e=>{if(map[e.key])keys[map[e.key]]=0;});
+document.querySelectorAll('[data-k]').forEach(b=>{const k=b.dataset.k;b.addEventListener('pointerdown',e=>{e.preventDefault();keys[k]=1;});['pointerup','pointerleave','pointercancel'].forEach(t=>b.addEventListener(t,()=>{if(k!=='jump')keys[k]=0;}));});
+stage.addEventListener('pointerdown',()=>{if(mode==='ride')keys.jump=1;});
+let last=performance.now();
+function frame(now){const dt=Math.min(.033,(now-last)/1000);last=now;const t=now/1000;
+  if(mode==='ride')update(dt);
+  g.setTransform(1,0,0,1,0,0);g.clearRect(0,0,fg.width,fg.height);g.setTransform(px,0,0,px,0,0);g.lineJoin='round';
+  if(pat){mode==='ride'?drawRide(t):drawBuild(t);}
+  if(speck){g.setTransform(1,0,0,1,0,0);g.globalCompositeOperation='destination-out';g.drawImage(speck,0,0);g.globalCompositeOperation='source-over';}
+  requestAnimationFrame(frame);}
+new ResizeObserver(resize).observe(stage);reset(0);setMode('build');requestAnimationFrame(frame);
+window.ride={get P(){return P},keys,setMode,update};
+})();
+</script>
+</body>
+</html>

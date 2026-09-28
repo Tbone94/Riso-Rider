@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Side view test</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Stencil+Display:wght@400..900&family=Cutive+Mono&display=swap" rel="stylesheet">
+<style>
+:root{--paper:#f2ede3;--ink:#26252a}
+*{box-sizing:border-box}
+body{margin:0;padding:16px;background:#e4ded2;color:var(--ink);font:13px/1.4 "Helvetica Neue",Arial,sans-serif}
+h1{font:800 18px/1 "Helvetica Neue",Arial;margin:0 0 4px;letter-spacing:.02em}
+p.note{margin:0 0 14px;max-width:900px;color:#555}
+#grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(560px,100%),1fr));gap:16px}
+.card{background:#fff8;padding:10px;border-radius:4px}
+.card h2{margin:0 0 6px;font:700 12px/1.2 ui-monospace,Menlo,monospace;letter-spacing:.08em;text-transform:uppercase}
+.bar{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px}
+button{font:700 11px ui-monospace,Menlo,monospace;border:1.5px solid var(--key,#333);background:var(--paper);color:var(--key,#333);padding:4px 8px;border-radius:3px;cursor:pointer;text-transform:uppercase}
+button.on{background:var(--key,#333);color:var(--paper)}
+.ink{margin-left:auto;font:700 11px ui-monospace,Menlo,monospace;color:var(--key)}
+.ink.flash{animation:shake .35s}
+@keyframes shake{25%{transform:translateX(-4px)}75%{transform:translateX(4px)}}
+.stage{position:relative;width:100%;aspect-ratio:16/10;background:var(--paper);overflow:hidden;touch-action:none}
+.stage canvas{position:absolute;inset:0;width:100%;height:100%}
+.stage canvas.fg{mix-blend-mode:multiply;cursor:crosshair}
+.toast{position:absolute;left:50%;top:8px;transform:translateX(-50%);font:800 14px "Helvetica Neue",Arial;color:var(--mid);text-transform:uppercase;opacity:0;pointer-events:none}
+.toast.show{animation:toast 1.4s}
+@keyframes toast{10%,70%{opacity:1}100%{opacity:0}}
+.log{font:11px ui-monospace,Menlo,monospace;color:#666;margin-top:4px;min-height:1.4em}
+</style>
+</head>
+<body>
+<h1>side.js test bench</h1>
+<p class="note">Each card is its own <code>createSide</code> with a fake <code>S</code>. Draw with the tool buttons; <b>Ride (sim)</b> runs <code>simulate(level, items, {policy:'auto'})</code> and sets <code>S.ghost</code> like the app will on return from a ride. Grain speckle is knocked out of the fg like the app does. <code>?only=0,2</code> shows just those cards; <code>?rm</code> forces reduced motion (no ghost reveal animation).</p>
+<div id="grid"></div>
+<script src="../riso.js"></script>
+<script type="module">
+// cache-bust side.js so the bench always runs the file on disk (the static server lets browsers cache modules)
+const {createSide}=await import(`../src/side.js?v=${Date.now()}`);
+import {simulate,inkUsed,itemCost,W,H} from '../src/physics.js';
+import * as LV from '../src/levels.js';
+const LEVELS=LV.LEVELS,DEV=LV.DEV_LEVELS||[],ALL=[...LEVELS,...DEV];
+
+const TAU=Math.PI*2,hex=c=>Riso.INKS[c]||c;
+function dotPattern(g,color,step,rad){const c=document.createElement('canvas');c.width=c.height=step*2;const x=c.getContext('2d');x.fillStyle=color;
+  [[step/2,step/2],[step*1.5,step*1.5]].forEach(([a,b])=>{x.beginPath();x.arc(a,b,rad,0,TAU);x.fill();});return g.createPattern(c,'repeat');}
+function speckle(pw,ph){const c=document.createElement('canvas');c.width=pw;c.height=ph;const g=c.getContext('2d'),id=g.createImageData(pw,ph),d=id.data;
+  for(let i=0;i<d.length;i+=4)d[i+3]=Math.random()<.18?60+Math.random()*150:0;g.putImageData(id,0,0);return c;}
+const bgCache={};
+function printBg(L){const k=L.id;if(bgCache[k])return bgCache[k];const pw=800,ph=500,inks=L.bg.inks.map(hex);
+  const dens=Riso.renderScene(L.bg.scene,L.bg.seed,pw,ph,.55);dens.forEach(d=>{for(let i=0;i<d.length;i++)d[i]*=.5;});
+  const img=Riso.print({w:pw,h:ph,paper:Riso.PAPERS.Natural,layers:Riso.layersFor(dens,inks,{seed:L.bg.seed,cell:3,mis:1.25}),texture:1,seed:L.bg.seed});
+  const c=document.createElement('canvas');c.width=pw;c.height=ph;c.getContext('2d').putImageData(img,0,0);return bgCache[k]=c;}
+
+const drift=w=>({steer:w.rider.grounded&&w.rider.groundKind==='line'?.45:0,jump:false,jumpHeld:false,push:0});
+const lv=id=>ALL.find(l=>l.id===id);
+const SCEN=[
+  {title:'First line · failed ghost (drifted off the tightrope)',level:'first-line',items:L=>L.solutions[0],policy:drift},
+  {title:'Springy · failed ghost (popped)',level:'springy',items:()=>[{type:'rope',a:[140,400],b:[260,400]}],tool:'rope'},
+  {title:'Updraft · won ghost (wind lift)',level:'updraft',items:L=>L.solutions[0],tool:'wind'},
+  {title:'First line · two lines, autopilot jumps the gap',level:'first-line',items:()=>[{type:'line',pts:[[152,136],[250,180]]},{type:'line',pts:[[300,224],[420,304]]}]},
+  {title:'Pull · edit only, well tool',level:'pull',items:()=>[],tool:'well',noGhost:true},
+  {title:'Grand tour · edit, all tools, failed ghost',level:'grand-tour',items:()=>[{type:'line',pts:[[132,166],[240,200],[330,240]]}]},
+  {title:'Grand tour · drag a well or a rope end (hooks.moved → undo)',level:'grand-tour',items:()=>[{type:'well',x:300,y:330},{type:'rope',a:[170,420],b:[300,445]}],tool:'well',noGhost:true},
+  // round A: one tiny level per mechanic (DEV_LEVELS from levels.js)
+  {title:'Dev drops · autopilot {drops:true}: filled = got',level:'dev-drops',items:()=>[],policy:'drops'},
+  {title:'Dev drops · plain autopilot: hollow = missed',level:'dev-drops',items:()=>[]},
+  {title:'Dev drops · no ghost (planning view)',level:'dev-drops',items:()=>[],noGhost:true},
+  {title:'Dev ice · won ghost',level:'dev-ice',items:()=>[]},
+  {title:'Dev boost · ghost (hover the pad for its arrow)',level:'dev-boost',items:()=>[]},
+  {title:'Dev crumble · ghost with crumble marks',level:'dev-crumble',items:()=>[]},
+  {title:'Dev crumble · planning view',level:'dev-crumble',items:()=>[],noGhost:true},
+].filter(sc=>lv(sc.level));
+// any real level that has drops, ridden with the drop-seeking autopilot on its first solution
+LEVELS.filter(L=>L.drops&&L.drops.length).forEach(L=>SCEN.push({title:`${L.name} · drops, solution 1, autopilot {drops:true}`,level:L.id,items:L=>L.solutions[0],policy:'drops'}));
+
+function ghostOf(L,items,policy){const r=simulate(L,items,{policy:policy||'auto'}),w=r.world;
+  return{path:w.path,events:w.events,status:r.status==='timeout'?'stuck':r.status,at:[w.rider.x,w.rider.y],refund:w.refund||0};}
+
+const cards=[];
+const only=new URLSearchParams(location.search).get('only');
+SCEN.forEach((sc,ci)=>{
+  if(only!==null&&!only.split(',').includes(String(ci)))return;
+  const L=lv(sc.level),root=document.createElement('div');root.className='card';
+  root.innerHTML=`<h2>${sc.title}</h2><div class="bar"></div><div class="stage"><canvas class="bg"></canvas><canvas class="fg"></canvas><div class="toast"></div></div><div class="log"></div>`;
+  document.getElementById('grid').append(root);
+  const bar=root.querySelector('.bar'),bg=root.querySelector('.bg'),fg=root.querySelector('.fg'),stage=root.querySelector('.stage'),log=root.querySelector('.log');
+  const ink={light:hex(L.bg.inks[0]),mid:hex(L.bg.inks[1]),key:hex(L.bg.inks[2])};
+  root.style.setProperty('--key',ink.key);root.style.setProperty('--mid',ink.mid);
+  const g0=fg.getContext('2d');
+  const S={li:ALL.indexOf(L),level:L,items:JSON.parse(JSON.stringify(sc.items(L))),tool:sc.tool||L.tools[0],mode:'edit',stroke:null,ink,
+    pat:{light:dotPattern(g0,ink.light,7,1.9),lightDense:dotPattern(g0,ink.light,6,2.4),mid:dotPattern(g0,ink.mid,6,1.7),key:dotPattern(g0,ink.key,6,1.5)},
+    ghost:null,falls:0,settings:{fov:90,bob:false,chase:false,reducedMotion:new URLSearchParams(location.search).has('rm')||matchMedia('(prefers-reduced-motion: reduce)').matches,assist:0}};
+  if(!sc.noGhost){S.ghost=ghostOf(L,S.items,sc.policy);if(S.ghost.status!=='win')S.falls=1;}
+  const inkEl=document.createElement('span');inkEl.className='ink';
+  const toastEl=root.querySelector('.toast');
+  const ui=()=>{const used=inkUsed(S.items)+(S.stroke?itemCost(S.stroke):0);inkEl.textContent=`ink ${Math.round(used)} / ${L.ink}  ·  par ${L.par.join('/')}`;
+    bar.querySelectorAll('[data-tool]').forEach(b=>b.classList.toggle('on',b.dataset.tool===S.tool));
+    log.textContent=S.ghost?`ghost: ${S.ghost.status} · ${S.ghost.path.length} samples · refund ${S.ghost.refund} · events ${S.ghost.events.map(e=>e.type+(e.type==='drop'?e.v:'')).join(' ')}`:'no ghost';};
+  const moves=[];
+  const hooks={onChange:ui,moved:prev=>{moves.push(prev);log.textContent=`moved · undo stack ${moves.length}`;},
+    toast:m=>{toastEl.textContent=m;toastEl.classList.remove('show');void toastEl.offsetWidth;toastEl.classList.add('show');},
+    flashInk:()=>{inkEl.classList.remove('flash');void inkEl.offsetWidth;inkEl.classList.add('flash');}};
+  L.tools.forEach(t=>{const b=document.createElement('button');b.dataset.tool=t;b.textContent=t;b.onclick=()=>{S.tool=t;ui();};bar.append(b);});
+  const btn=(label,fn)=>{const b=document.createElement('button');b.textContent=label;b.onclick=()=>{fn();ui();};bar.append(b);};
+  btn('undo',()=>{if(moves.length)S.items=moves.pop();else S.items.pop();});btn('clear',()=>{S.items=[];});
+  btn('ride (sim)',()=>{S.ghost=ghostOf(L,S.items,sc.policy);});btn('no ghost',()=>{S.ghost=null;});
+  bar.append(inkEl);
+  const side=createSide({canvas:fg,getState:()=>S,hooks});
+  let px=1,speck=null;
+  const resize=()=>{const r=stage.getBoundingClientRect(),dpr=Math.min(devicePixelRatio||1,2),pw=Math.round(r.width*dpr),ph=Math.round(r.height*dpr);
+    if(pw<1||ph<1)return;px=r.width/W*dpr;if(fg.width!==pw){fg.width=pw;fg.height=ph;speck=speckle(pw,ph);}};
+  new ResizeObserver(resize).observe(stage);resize();
+  const b=printBg(L);bg.width=b.width;bg.height=b.height;bg.getContext('2d').drawImage(b,0,0);
+  ui();
+  cards.push({S,side,fg,get px(){return px;},get speck(){return speck;}});
+  window['card'+ci]={S,side};
+});
+window.cards=cards;
+if(cards.length===1)document.getElementById('grid').style.gridTemplateColumns='minmax(0,860px)';   // one card: app-sized stage
+// Loupe for close inspection (view only; pointer mapping ignores it): loupe(zoom, cx, cy) on the first card, loupe() to reset.
+window.loupe=(z=1,cx=W/2,cy=H/2)=>{const c=cards[0];c.loupe=z>1?{z,cx,cy}:null;const bg=c.fg.parentNode.querySelector('.bg');
+  bg.style.transformOrigin='0 0';bg.style.transform=c.loupe?`translate(${(W/2-cx*z)/W*100}%,${(H/2-cy*z)/H*100}%) scale(${z})`:'';};
+function frame(now){for(const c of cards){const g=c.fg.getContext('2d');g.setTransform(1,0,0,1,0,0);g.clearRect(0,0,c.fg.width,c.fg.height);
+    const l=c.loupe;if(l)g.setTransform(c.px*l.z,0,0,c.px*l.z,(W/2-l.cx*l.z)*c.px,(H/2-l.cy*l.z)*c.px);else g.setTransform(c.px,0,0,c.px,0,0);
+    c.side.draw(g,now/1000);
+    if(c.speck){g.setTransform(1,0,0,1,0,0);g.globalCompositeOperation='destination-out';g.drawImage(c.speck,0,0);g.globalCompositeOperation='source-over';}}
+  requestAnimationFrame(frame);}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

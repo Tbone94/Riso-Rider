@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Backdrop readability</title>
+<style>
+:root{--paper:#f2ede3;--ink:#26252a}
+*{box-sizing:border-box}
+body{margin:0;padding:16px;background:#e4ded2;color:var(--ink);font:13px/1.4 "Helvetica Neue",Arial,sans-serif}
+h1{font:800 18px/1 "Helvetica Neue",Arial;margin:0 0 4px}
+p.note{margin:0 0 10px;max-width:980px;color:#555}
+.bar{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0 0 12px}
+button{font:700 11px ui-monospace,Menlo,monospace;border:1.5px solid #333;background:var(--paper);color:#333;padding:4px 8px;cursor:pointer;text-transform:uppercase}
+button.on{background:#333;color:var(--paper)}
+#grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(460px,100%),1fr));gap:14px}
+.card{background:#fff8;padding:8px}
+.card h2{margin:0 0 6px;font:700 12px/1.2 ui-monospace,Menlo,monospace;letter-spacing:.06em;text-transform:uppercase;display:flex;gap:8px;align-items:center}
+.card h2 span{margin-left:auto;font-weight:400;letter-spacing:0;text-transform:none}
+.stage{position:relative;width:100%;aspect-ratio:16/10;background:var(--paper);overflow:hidden}
+.stage canvas{position:absolute;inset:0;width:100%;height:100%}
+.stage canvas.fg{mix-blend-mode:multiply}
+.stage canvas.band{opacity:0}
+body.showband .stage canvas.band{opacity:.35}
+body.clean>h1,body.clean>p.note,body.clean>table{display:none}
+.m{font:11px ui-monospace,Menlo,monospace;color:#444;margin-top:4px;white-space:pre}
+table{border-collapse:collapse;font:11px ui-monospace,Menlo,monospace;margin:0 0 14px;background:#fff8}
+td,th{padding:3px 8px;text-align:right;border-bottom:1px solid #0001}
+th:first-child,td:first-child{text-align:left}
+.good{color:#0a6b3a}.bad{color:#a2301f}
+</style>
+</head>
+<body>
+<h1>Side backdrops: readability</h1>
+<p class="note">Every level's side backdrop printed as the app does, <b>before</b> (the frozen pre-round-B riso.js: calm .55, pale .5, dots everywhere) and <b>after</b> (<code>Riso.printSideBackdrop</code>, which follows <code>Riso.SCENES[scene].side</code>). The overlay is the real <code>side.js</code> showing <code>solutions[0]</code> and its ghost ride.
+<b>Band</b> = backdrop pixels within 18 design units of a block edge, the goal ring or the solution's ride path. <b>Density</b> = colour distance from bare paper (CIE76 ΔE / 100, on 4×4-averaged pixels so grain and dots blend as the eye blends them), i.e. how much ink the eye sees there, loud light inks included. Lower band density means gameplay reads more clearly; <b>rest</b> is the rest of the sheet, which should keep its richness. <code>p90</code> is the 90th-percentile band density (dark patches behind gameplay). <b>Dark</b> is the plain lightness loss (L*) in the band, since the game's key ink reads by value.<br>URL: <code>?only=0,2</code> picks levels (0-based) · <code>?v=before</code> starts on before · <code>?pw=1600</code> prints at desktop size · <code>?full</code> shows the scenes at poster strength (calm 0, pale 1) · <code>?clean</code> hides this header · <code>?nooverlay</code>. Console: <code>art.measure</code>, <code>art.bandMask</code>, <code>art.ghostOf</code>.</p>
+<div class="bar">
+  <button data-v="before">Before</button><button data-v="after" class="on">After</button>
+  <button id="band">Show band</button><button id="ov" class="on">Overlay</button>
+  <span id="status" class="m"></span>
+</div>
+<table id="sum"></table>
+<div id="grid"></div>
+<script src="art-riso-before.js"></script>
+<script src="../riso.js"></script>
+<script type="module">
+import * as P from '../src/physics.js';
+import {LEVELS} from '../src/levels.js';
+let createSide=null;try{({createSide}=await import('../src/side.js'));}catch(e){console.warn('side.js unavailable, using the simple overlay',e);}
+const q=new URLSearchParams(location.search),only=q.get('only');
+// ?pw=1600 prints at the app's full desktop size (slower); metrics are resolution-independent enough to compare at 800.
+const {W,H}=P,TAU=Math.PI*2,hex=c=>Riso.INKS[c]||c,PW=+q.get('pw')||800,PH=Math.round(PW*H/W),BAND=18;
+if(q.has('clean'))document.body.classList.add('clean');   // ?clean hides the header and table (for screenshots); ?v=before starts on before
+const $=s=>document.querySelector(s);
+const status=t=>$('#status').textContent=t;
+
+// ---------- printing ----------
+function canvasOf(img){const c=document.createElement('canvas');c.width=img.width;c.height=img.height;c.getContext('2d').putImageData(img,0,0);return c;}
+// Exactly the recipe src/app.js used before round B.
+function printBefore(L){const R=RisoBefore,inks=L.bg.inks.map(c=>R.INKS[c]||c);
+  const dens=R.renderScene(L.bg.scene,L.bg.seed,PW,PH,.55);dens.forEach(d=>{for(let i=0;i<d.length;i++)d[i]*=.5;});
+  return R.print({w:PW,h:PH,paper:R.PAPERS.Natural,layers:R.layersFor(dens,inks,{seed:L.bg.seed,cell:6*PW/1600,mis:2.5*PW/1600}),texture:1,seed:L.bg.seed});}
+// The new recipe: the scene's side profile.
+function printAfter(L){if(Riso.printSideBackdrop)return Riso.printSideBackdrop(L.bg,PW,PH,q.has('full')?{calm:0,pale:1}:{});   // ?full: the scene at poster strength
+  const p=(Riso.SCENES[L.bg.scene]||{}).side||{calm:.55,pale:.5},inks=L.bg.inks.map(hex);
+  const dens=Riso.renderScene(L.bg.scene,L.bg.seed,PW,PH,p.calm);dens.forEach(d=>{for(let i=0;i<d.length;i++)d[i]*=p.pale;});
+  return Riso.print({w:PW,h:PH,paper:Riso.PAPERS.Natural,layers:Riso.layersFor(dens,inks,{seed:L.bg.seed,cell:6*PW/1600,mis:2.5*PW/1600,screen:p.screen}),texture:1,seed:L.bg.seed});}
+
+// ---------- the gameplay band ----------
+function ghostOf(L,items){const r=P.simulate(L,items,{policy:'auto'}),w=r.world;
+  return{path:w.path,events:w.events,status:r.status==='timeout'?'stuck':r.status,at:[w.rider.x,w.rider.y],refund:w.refund||0};}
+function bandMask(L,ghost){const c=document.createElement('canvas');c.width=PW;c.height=PH;const g=c.getContext('2d');g.scale(PW/W,PH/H);
+  g.strokeStyle='#000';g.lineWidth=BAND*2;g.lineJoin=g.lineCap='round';
+  const poly=p=>{g.beginPath();p.forEach((v,i)=>g[i?'lineTo':'moveTo'](v[0],v[1]));g.closePath();g.stroke();};
+  [...L.blocks,...(L.ice||[]),...(L.crumble||[])].forEach(poly);
+  g.beginPath();g.arc(L.goal.x,L.goal.y,L.goal.r,0,TAU);g.stroke();
+  const pts=ghost.path;g.beginPath();pts.forEach((v,i)=>g[i?'lineTo':'moveTo'](v[0],v[1]));g.stroke();
+  const d=g.getImageData(0,0,PW,PH).data,m=new Uint8Array(PW*PH);for(let i=0;i<m.length;i++)m[i]=d[i*4+3]>127?1:0;return{mask:m,canvas:c};}
+// Ink density as the eye sees it: average 4×4 cells (the eye blends grain and dots), then take the
+// CIE76 colour distance from bare paper, /100. Unlike plain darkness this also counts loud light inks
+// (a fluorescent pink block is barely darker than paper but shouts).
+function lab(r,g,b){const f=v=>(v/=255)<=.04045?v/12.92:((v+.055)/1.055)**2.4;r=f(r);g=f(g);b=f(b);
+  let x=(r*.4124+g*.3576+b*.1805)/.95047,y=r*.2126+g*.7152+b*.0722,z=(r*.0193+g*.1192+b*.9505)/1.08883;
+  const h=t=>t>.008856?Math.cbrt(t):7.787*t+16/116;x=h(x);y=h(y);z=h(z);return[116*y-16,500*(x-y),200*(y-z)];}
+function measure(img,mask){const d=img.data,pp=parseInt(Riso.PAPERS.Natural.slice(1),16),P0=lab(pp>>16&255,pp>>8&255,pp&255),C=4;
+  let sb=0,nb=0,sr=0,nr=0,db=0,dr=0;const hist=new Uint32Array(101);
+  for(let y=0;y+C<=PH;y+=C)for(let x=0;x<PW;x+=C){let r=0,g=0,b=0,m=0;
+    for(let j=0;j<C;j++)for(let i=0;i<C;i++){const k=(y+j)*PW+x+i;r+=d[k*4];g+=d[k*4+1];b+=d[k*4+2];m+=mask[k];}
+    const n=C*C,L=lab(r/n,g/n,b/n),k=Math.min(1,Math.hypot(L[0]-P0[0],L[1]-P0[1],L[2]-P0[2])/100);
+    const dk=Math.max(0,(P0[0]-L[0])/P0[0]);   // darkness: lightness lost vs paper
+    if(m*2>=n){sb+=k;db+=dk;nb++;hist[Math.round(k*100)]++;}else{sr+=k;dr+=dk;nr++;}}
+  let acc=0,p90=0;for(let j=0;j<=100;j++){acc+=hist[j];if(acc>=nb*.9){p90=j/100;break;}}
+  return{band:sb/nb,rest:sr/nr,ratio:(sb/nb)/(sr/nr),p90,darkBand:db/nb,darkRest:dr/nr};}
+
+// ---------- the overlay (real side.js with a fake S, as dev/side-test.html does) ----------
+function dotPattern(g,color,step,rad){const c=document.createElement('canvas');c.width=c.height=step*2;const x=c.getContext('2d');x.fillStyle=color;
+  [[step/2,step/2],[step*1.5,step*1.5]].forEach(([a,b])=>{x.beginPath();x.arc(a,b,rad,0,TAU);x.fill();});return g.createPattern(c,'repeat');}
+function simpleOverlay(g,L,S){const k=S.ink.key,m=S.ink.mid,poly=(p,dx,dy)=>{g.beginPath();p.forEach((v,i)=>g[i?'lineTo':'moveTo'](v[0]+dx,v[1]+dy));g.closePath();};
+  L.blocks.forEach(p=>{g.fillStyle=m;poly(p,4,3);g.fill();g.fillStyle=k;poly(p,0,0);g.fill();});
+  g.strokeStyle=k;g.lineWidth=2;g.beginPath();g.arc(L.goal.x,L.goal.y,L.goal.r,0,TAU);g.stroke();
+  g.strokeStyle=m;g.setLineDash([3,4]);g.beginPath();S.ghost.path.forEach((v,i)=>g[i?'lineTo':'moveTo'](v[0],v[1]));g.stroke();g.setLineDash([]);}
+
+// ---------- cards ----------
+const cards=[],results=[];
+let view=q.get('v')==='before'?'before':'after',overlay=!q.has('nooverlay');
+document.querySelectorAll('[data-v]').forEach(x=>x.classList.toggle('on',x.dataset.v===view));$('#ov').classList.toggle('on',overlay);
+async function build(){
+  for(const [li,L] of LEVELS.entries()){
+    if(only!==null&&!only.split(',').includes(String(li)))continue;
+    status(`printing ${li+1}/${LEVELS.length}…`);await new Promise(r=>setTimeout(r,0));
+    const root=document.createElement('div');root.className='card';
+    root.innerHTML=`<h2>${String(li+1).padStart(2,'0')} ${L.name}<span>${L.bg.scene} · seed ${L.bg.seed} · ${L.bg.inks.join(' / ')}</span></h2>
+      <div class="stage"><canvas class="bg"></canvas><canvas class="band"></canvas><canvas class="fg"></canvas></div><div class="m"></div>`;
+    $('#grid').append(root);
+    const bg=root.querySelector('.bg'),fg=root.querySelector('.fg'),bandCv=root.querySelector('.band'),stage=root.querySelector('.stage');
+    const ink={light:hex(L.bg.inks[0]),mid:hex(L.bg.inks[1]),key:hex(L.bg.inks[2])};
+    const items=JSON.parse(JSON.stringify(L.solutions[0])),ghost=ghostOf(L,items);
+    const t0=performance.now(),before=printBefore(L),t1=performance.now(),after=printAfter(L),t2=performance.now();
+    const {mask,canvas:bm}=bandMask(L,ghost);bandCv.width=PW;bandCv.height=PH;bandCv.getContext('2d').drawImage(bm,0,0);
+    const mb=measure(before,mask),ma=measure(after,mask);
+    const res={i:li+1,id:L.id,scene:L.bg.scene,before:mb,after:ma,ms:{before:Math.round(t1-t0),after:Math.round(t2-t1)},ghost:ghost.status};results.push(res);
+    const f=v=>v.toFixed(3);
+    root.querySelector('.m').textContent=`band   before ${f(mb.band)} (p90 ${f(mb.p90)})  after ${f(ma.band)} (p90 ${f(ma.p90)})\nrest   before ${f(mb.rest)}             after ${f(ma.rest)}\ndark   band ${f(mb.darkBand)} → ${f(ma.darkBand)}   rest ${f(mb.darkRest)} → ${f(ma.darkRest)}\nband/rest before ${f(mb.ratio)}   after ${f(ma.ratio)}   · ghost ${ghost.status}`;
+    const prints={before:canvasOf(before),after:canvasOf(after)};
+    const g0=fg.getContext('2d');
+    const S={li,level:L,items,tool:L.tools[0],mode:'edit',stroke:null,ink,
+      pat:{light:dotPattern(g0,ink.light,7,1.9),lightDense:dotPattern(g0,ink.light,6,2.4),mid:dotPattern(g0,ink.mid,6,1.7),key:dotPattern(g0,ink.key,6,1.5)},
+      ghost,falls:ghost.status==='win'?0:1,settings:{fov:90,bob:false,chase:false,reducedMotion:true,assist:0}};
+    let side=null;try{side=createSide&&createSide({canvas:fg,getState:()=>S,hooks:{}});}catch(e){console.warn(e);}
+    const card={L,S,side,fg,bg,prints,stage,res,px:1,
+      show(){const src=this.prints[view];bg.width=src.width;bg.height=src.height;bg.getContext('2d').drawImage(src,0,0);},
+      resize(){const r=stage.getBoundingClientRect(),dpr=Math.min(devicePixelRatio||1,2),pw=Math.round(r.width*dpr),ph=Math.round(r.height*dpr);
+        this.px=r.width/W*dpr;if(fg.width!==pw){fg.width=pw;fg.height=ph;}}};
+    new ResizeObserver(()=>card.resize()).observe(stage);card.resize();card.show();cards.push(card);
+  }
+  summary();status(`done · ${results.length} levels`);window.artDone=true;}
+
+function summary(){const f=v=>v.toFixed(3),avg=(k,m)=>results.reduce((s,r)=>s+r[k][m],0)/results.length,sd=(k,m)=>{const a=avg(k,m);return Math.sqrt(results.reduce((s,r)=>s+(r[k][m]-a)**2,0)/results.length);};
+  const rows=results.map(r=>`<tr><td>${String(r.i).padStart(2,'0')} ${r.id}</td><td>${r.scene}</td><td>${f(r.before.band)}</td><td class="${r.after.band<r.before.band?'good':'bad'}">${f(r.after.band)}</td><td>${f(r.before.p90)}</td><td class="${r.after.p90<=r.before.p90?'good':'bad'}">${f(r.after.p90)}</td><td>${f(r.before.rest)}</td><td>${f(r.after.rest)}</td><td>${f(r.before.ratio)}</td><td>${f(r.after.ratio)}</td><td>${f(r.before.darkBand)}</td><td class="${r.after.darkBand<=r.before.darkBand?'good':'bad'}">${f(r.after.darkBand)}</td><td>${r.ms.after} ms</td></tr>`).join('');
+  $('#sum').innerHTML=`<tr><th>level</th><th>scene</th><th>band before</th><th>band after</th><th>p90 before</th><th>p90 after</th><th>rest before</th><th>rest after</th><th>band/rest before</th><th>band/rest after</th><th>dark band before</th><th>dark band after</th><th>print</th></tr>${rows}
+    <tr><th>mean ± sd</th><th></th><th>${f(avg('before','band'))} ± ${f(sd('before','band'))}</th><th>${f(avg('after','band'))} ± ${f(sd('after','band'))}</th><th>${f(avg('before','p90'))}</th><th>${f(avg('after','p90'))}</th><th>${f(avg('before','rest'))}</th><th>${f(avg('after','rest'))}</th><th>${f(avg('before','ratio'))}</th><th>${f(avg('after','ratio'))}</th><th>${f(avg('before','darkBand'))}</th><th>${f(avg('after','darkBand'))}</th><th></th></tr>`;
+  window.artResults=results;}
+
+document.querySelectorAll('[data-v]').forEach(b=>b.onclick=()=>{view=b.dataset.v;document.querySelectorAll('[data-v]').forEach(x=>x.classList.toggle('on',x===b));cards.forEach(c=>c.show());});
+$('#band').onclick=e=>{document.body.classList.toggle('showband');e.target.classList.toggle('on');};
+$('#ov').onclick=e=>{overlay=!overlay;e.target.classList.toggle('on',overlay);};
+window.art={printBefore,printAfter,ghostOf,bandMask,measure,LEVELS};   // for console experiments
+window.setView=v=>document.querySelector(`[data-v=${v}]`).click();
+function frame(now){for(const c of cards){const g=c.fg.getContext('2d');g.setTransform(1,0,0,1,0,0);g.clearRect(0,0,c.fg.width,c.fg.height);if(!overlay)continue;
+  g.setTransform(c.px,0,0,c.px,0,0);if(c.side)c.side.draw(g,now/1000);else simpleOverlay(g,c.L,c.S);}
+  requestAnimationFrame(frame);}
+requestAnimationFrame(frame);
+build();
+</script>
+</body>
+</html>

@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Drift · ride test</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Stencil+Display:wght@400..900&family=Cutive+Mono&display=swap" rel="stylesheet">
+<style>
+:root{--paper:#f2ede3;--light:#ffb511;--mid:#ff6c2f;--key:#3d5588;--mono:"Cutive Mono",ui-monospace,Menlo,monospace;--display:"Big Shoulders Stencil Display",ui-monospace,monospace}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--paper);color:var(--key);font:14px/1.4 var(--mono);display:flex;flex-direction:column;align-items:center;overflow:hidden}
+#app{width:min(100vw - 24px,(100vh - 150px)*1.6);display:flex;flex-direction:column;gap:8px;padding:10px 0}
+h1{margin:0;font:800 26px/1 var(--display);letter-spacing:.12em;text-shadow:2px 1.5px 0 var(--mid)}
+#stage{position:relative;width:100%;aspect-ratio:16/10;overflow:hidden;background:var(--paper)}
+#stage canvas{position:absolute;inset:0;width:100%;height:100%}
+#bgr{transform-origin:50% 50%;will-change:transform}
+#fg{mix-blend-mode:multiply}
+.bar{display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:13px}
+label{display:inline-flex;gap:5px;align-items:center}
+select,button{font:13px var(--mono);color:var(--key);background:var(--paper);border:1.5px solid var(--key);padding:3px 7px}
+#fps{margin-left:auto;font-weight:700;min-width:210px;text-align:right}
+</style>
+</head>
+<body>
+<div id="app">
+  <div class="bar"><h1>RIDE TEST</h1><span id="status"></span><span id="fps"></span></div>
+  <div id="stage"><canvas id="bgs"></canvas><canvas id="bgr"></canvas><canvas id="fg"></canvas></div>
+  <div class="bar">
+    <label>job <select id="lvl"></select></label>
+    <label>lens <input id="fov" type="range" min="60" max="120" value="90"><span id="fovv">90</span>°</label>
+    <label><input id="chase" type="checkbox"> chase</label>
+    <label><input id="bob" type="checkbox"> bob</label>
+    <label><input id="rm" type="checkbox"> steady press</label>
+    <label><input id="auto" type="checkbox" checked> autopilot</label>
+    <label><input id="slow" type="checkbox"> ¼ speed</label>
+    <button id="restart">R restart</button><button id="pause">P pause</button>
+  </div>
+  <div class="bar">
+    <b style="font:800 15px var(--display);letter-spacing:.12em">SWOOP</b>
+    <button id="swFull">play full (T)</button><button id="swQuick">play quick</button>
+    <label>scrub p <input id="tp" type="range" min="0" max="1000" value="0" style="width:260px"><span id="tpv">0.00</span></label>
+    <label><input id="drops" type="checkbox" checked> autopilot takes drops</label>
+  </div>
+  <div class="bar" style="opacity:.75">←/→ or A/D steer · space jump (hold = floatier) · ↑/↓ push/brake · keys override the autopilot · R restart · P pause</div>
+</div>
+<script src="../riso.js"></script>
+<script type="module">
+import {build,step,autopilot,DT,NO_INPUT} from '../src/physics.js';
+import {LEVELS as MAIN,DEV_LEVELS} from '../src/levels.js';
+import {createRide} from '../src/ride.js';
+import {createSide} from '../src/side.js';
+const LEVELS=[...MAIN,...(DEV_LEVELS||[])];
+
+const $=s=>document.querySelector(s),stage=$('#stage'),bgr=$('#bgr'),bgs=$('#bgs'),fg=$('#fg'),g=fg.getContext('2d');
+// Variants: every known solution, plus dev extras (a gap jump, a 300-segment stress line, a kitchen sink).
+const wig=[];for(let i=0;i<=300;i++){const t=i/300,x=152+(562-152)*t;wig.push([x,136+(398-136)*t+Math.sin(t*60)*3]);}
+const VARIANTS=[],LI=id=>Math.max(0,LEVELS.findIndex(l=>l.id===id));
+LEVELS.forEach((L,li)=>{const sols=L.solutions&&L.solutions.length?L.solutions:[[]];sols.forEach((sol,si)=>VARIANTS.push({li,name:`${li<MAIN.length?String(li+1).padStart(2,'0')+' ':''}${L.name}${sols.length>1?' #'+(si+1):''}`,items:sol}));});
+VARIANTS.push({li:LI('first-line'),name:'First line · gap jump',items:[{type:'line',pts:[[152,136],[260,207.28]]},{type:'line',pts:[[340,243.28],[562,398]]}]});
+VARIANTS.push({li:LI('first-line'),name:'First line · stress 600 segs',items:[{type:'line',pts:wig},{type:'line',pts:wig.map(p=>[p[0],p[1]-60])},{type:'rope',a:[200,300],b:[330,330]},{type:'wind',pts:[[300,120],[420,150],[540,220]]}]});
+VARIANTS.push({li:LI('grand-tour'),name:'Grand tour · kitchen sink',items:[{type:'line',pts:[[130,161],[200,190],[240,200]]},{type:'rope',a:[250,300],b:[340,300]},{type:'wind',pts:[[182,210],[227,132],[331,34]]},{type:'well',x:520,y:200}]});
+VARIANTS.forEach((v,i)=>$('#lvl').add(new Option(v.name,i)));
+
+const S={li:0,level:null,items:[],mode:'ride',ink:{},pat:{},settings:{fov:90,bob:false,chase:false,reducedMotion:false,assist:0}};
+const ride=createRide();
+const side=createSide({canvas:document.createElement('canvas'),getState:()=>S,hooks:{}});
+const sideCv=document.createElement('canvas'),sg=sideCv.getContext('2d');
+let trans=null,holdP=null;   // trans: {p, playing, dur, t0}; holdP: view the current world from a swoop pose (dev only)
+let world=null,vi=0,px=1,speck=null,paused=false,endT=0,acc=0,printed=-1;
+const keys={left:0,right:0,up:0,down:0,jump:0,jumpHeld:0};
+
+function makePatterns(){const dot=(col,step,rad)=>{const t=document.createElement('canvas');t.width=t.height=step*2;const y=t.getContext('2d');y.fillStyle=col;
+    [[step/2,step/2],[step*1.5,step*1.5]].forEach(([a,b])=>{y.beginPath();y.arc(a,b,rad,0,Math.PI*2);y.fill();});const p=g.createPattern(t,'repeat');p.setTransform(new DOMMatrix().scale(1/px));return p;};
+  const k=px;S.pat={key:dot(S.ink.key,5*k,1.6*k),mid:dot(S.ink.mid,6*k,1.9*k),light:dot(S.ink.light,6*k,2.2*k),lightDense:dot(S.ink.light,4*k,1.7*k)};}
+function load(i){vi=i;$('#lvl').value=i;const v=VARIANTS[i],L=LEVELS[v.li];S.li=v.li;S.level=L;S.items=v.items;
+  const n=L.bg.inks.map(n=>Riso.INKS[n]);S.ink={light:n[0],mid:n[1],key:n[2]};
+  document.documentElement.style.setProperty('--light',n[0]);document.documentElement.style.setProperty('--mid',n[1]);document.documentElement.style.setProperty('--key',n[2]);
+  makePatterns();restart();printBg();}
+let printTok=0,done='';
+function printBg(sync){if(!fg.width)return;const L=S.level,key=L.id+':'+fg.width;if(printed===key)return;printed=key;const tok=++printTok;
+  (sync?f=>f():f=>setTimeout(f,10))(()=>{if(tok!==printTok)return;const t0=performance.now(),pw=Math.min(1600,fg.width),c=ride.printBackdrop(L,pw,Math.round(pw*500/800));bgr.width=c.width;bgr.height=c.height;bgr.getContext('2d').drawImage(c,0,0);printSide(L,pw);
+    done=key;console.log('backdrop printed',L.id,pw,Math.round(performance.now()-t0)+'ms');});}
+function printSide(L,pw){const w=Math.min(1280,pw),h=Math.round(w*500/800),inks=L.bg.inks.map(n=>Riso.INKS[n]);
+  const dens=Riso.renderScene(L.bg.scene,L.bg.seed,w,h,.55);dens.forEach(d=>{for(let i=0;i<d.length;i++)d[i]*=.5;});
+  const img=Riso.print({w,h,paper:Riso.PAPERS.Natural,layers:Riso.layersFor(dens,inks,{seed:L.bg.seed,cell:6*w/1600,mis:2.5*w/1600}),texture:1,seed:L.bg.seed});
+  bgs.width=w;bgs.height=h;bgs.getContext('2d').putImageData(img,0,0);}
+function restart(){world=build(S.level,S.items,{assist:S.settings.assist});ride.reset(world,S.level,S);endT=0;acc=0;}
+function resize(){const r=stage.getBoundingClientRect(),dpr=Math.min(devicePixelRatio||1,2),pw=Math.round(r.width*dpr);if(fg.width===pw)return;
+  fg.width=pw;fg.height=Math.round(r.height*dpr);px=pw/800;
+  const c=document.createElement('canvas');c.width=fg.width;c.height=fg.height;const x=c.getContext('2d'),id=x.createImageData(c.width,c.height);
+  for(let i=3;i<id.data.length;i+=4)id.data[i]=Math.random()<.14?60+Math.random()*150:0;x.putImageData(id,0,0);speck=c;
+  if(S.level){makePatterns();printBg();}}
+
+function input(){let inp=$('#auto').checked?autopilot(world,S.level,{drops:$('#drops').checked}):{...NO_INPUT};
+  const steer=keys.right-keys.left;if(steer)inp={...inp,steer};
+  if(keys.jump){inp={...inp,jump:true};keys.jump=0;}if(keys.jumpHeld)inp={...inp,jumpHeld:true};
+  if(keys.up||keys.down)inp={...inp,push:keys.up-keys.down};return inp;}
+
+// fps + draw-time readout
+let frames=0,fpsT=performance.now(),fps=0,drawMs=0,maxMs=0;
+let last=performance.now();
+const k=()=>fg.getBoundingClientRect().width/800;
+function applyBg(b){if(b)bgr.style.transform=`translate(${(b.x*k()).toFixed(2)}px,${(b.y*k()).toFixed(2)}px) scale(${b.scale})`;}
+function render(t,dt){g.setTransform(1,0,0,1,0,0);g.clearRect(0,0,fg.width,fg.height);g.setTransform(px,0,0,px,0,0);
+  if(world&&(trans||holdP!=null)){// the app's side of the swoop: side layer at sideAlpha, ride backdrop at rideBgAlpha
+    if(sideCv.width!==fg.width||sideCv.height!==fg.height){sideCv.width=fg.width;sideCv.height=fg.height;}
+    const t0=performance.now(),out=ride.drawTransition(g,world,S.level,S,t,trans?trans.p:holdP),ms=performance.now()-t0;drawMs=drawMs*.9+ms*.1;maxMs=Math.max(maxMs*.995,ms);
+    if(out.sideAlpha>0){sg.setTransform(1,0,0,1,0,0);sg.clearRect(0,0,sideCv.width,sideCv.height);sg.setTransform(px,0,0,px,0,0);S.mode='edit';side.draw(sg,t);S.mode='ride';
+      g.save();g.setTransform(1,0,0,1,0,0);g.globalAlpha=out.sideAlpha;g.drawImage(sideCv,0,0);g.restore();}
+    bgr.style.opacity=out.rideBgAlpha;applyBg(out.bg);}
+  else if(world){bgr.style.opacity=1;const t0=performance.now(),out=ride.draw(g,world,S.level,S,t,dt),ms=performance.now()-t0;drawMs=drawMs*.9+ms*.1;maxMs=Math.max(maxMs*.995,ms);
+    if(out)applyBg(out.bg);}
+  if(speck){g.setTransform(1,0,0,1,0,0);g.globalCompositeOperation='destination-out';g.drawImage(speck,0,0);g.globalCompositeOperation='source-over';}}
+function frame(now){const dt=Math.min(.05,(now-last)/1000);last=now;const t=now/1000;
+  if(trans&&trans.playing){trans.p=Math.min(1,(now-trans.t0)/trans.dur);setTp(trans.p);if(trans.p>=1){trans=null;last=now;}}
+  if(world&&!paused&&!trans){acc+=dt*($('#slow').checked?.25:1);while(acc>=DT){if(world.status==='run')step(world,S.level,input());acc-=DT;}
+    if(world.status!=='run'){endT+=dt;if(endT>1.2)restart();}}
+  render(t,paused?0:dt);
+  frames++;if(now-fpsT>500){fps=frames*1000/(now-fpsT);frames=0;fpsT=now;
+    $('#fps').textContent=`${fps.toFixed(0)} fps · draw ${drawMs.toFixed(2)} ms (max ${maxMs.toFixed(1)}) · ${ride.stats.items} items`;}
+  if(world){const r=world.rider;$('#status').textContent=`${world.status} · t ${world.t.toFixed(2)} · x ${r.x|0} y ${r.y|0} z ${r.z|0} · ${r.grounded?r.groundKind:'air'}`;}
+  requestAnimationFrame(frame);}
+
+const map={ArrowLeft:'left',a:'left',ArrowRight:'right',d:'right',ArrowUp:'up',w:'up',ArrowDown:'down',s:'down'};
+addEventListener('keydown',e=>{if(e.target.tagName==='SELECT')return;if(e.key===' '){e.preventDefault();if(!e.repeat)keys.jump=1;keys.jumpHeld=1;}
+  if(map[e.key]){keys[map[e.key]]=1;e.preventDefault();}if(e.key==='r'){trans=null;restart();}if(e.key==='p')togglePause();if(e.key==='t')swoop('full');});
+addEventListener('keyup',e=>{if(e.key===' ')keys.jumpHeld=0;if(map[e.key])keys[map[e.key]]=0;});
+function setTp(p){$('#tp').value=Math.round(p*1000);$('#tpv').textContent=p.toFixed(2);}
+function swoop(kind){restart();paused=false;$('#pause').textContent='P pause';trans={p:0,playing:true,dur:ride.transitionMs[kind],t0:performance.now()};}
+$('#swFull').onclick=()=>swoop('full');$('#swQuick').onclick=()=>swoop('quick');
+$('#tp').oninput=e=>{const p=+e.target.value/1000;if(!trans||trans.playing){restart();}trans={p,playing:false};$('#tpv').textContent=p.toFixed(2);};
+function togglePause(){paused=!paused;$('#pause').textContent=paused?'P resume':'P pause';}
+$('#lvl').onchange=e=>load(+e.target.value);
+$('#fov').oninput=e=>{S.settings.fov=+e.target.value;$('#fovv').textContent=e.target.value;};
+$('#chase').onchange=e=>S.settings.chase=e.target.checked;
+$('#bob').onchange=e=>S.settings.bob=e.target.checked;
+$('#rm').onchange=e=>S.settings.reducedMotion=e.target.checked;
+$('#restart').onclick=restart;$('#pause').onclick=togglePause;
+S.settings.reducedMotion=matchMedia('(prefers-reduced-motion: reduce)').matches;$('#rm').checked=S.settings.reducedMotion;
+
+// Dev hook for screenshots: jump the sim to a time on a variant, frozen.
+window.rt={S,ride,get world(){return world},load,restart,
+  // The app's pattern style (tiles in design units, scaled by the canvas transform), for before/after timing.
+  appPatterns(){const dot=(col,step,rad)=>{const c=document.createElement('canvas');c.width=c.height=step*2;const x=c.getContext('2d');x.fillStyle=col;
+      [[step/2,step/2],[step*1.5,step*1.5]].forEach(([a,b])=>{x.beginPath();x.arc(a,b,rad,0,Math.PI*2);x.fill();});return g.createPattern(c,'repeat');};
+    S.pat={light:dot(S.ink.light,7,1.9),lightDense:dot(S.ink.light,6,2.4),mid:dot(S.ink.mid,6,1.7),key:dot(S.ink.key,5,1.6)};},
+  flushBench(fn,n=15){const tiny=document.createElement('canvas');tiny.width=tiny.height=1;const tg=tiny.getContext('2d');
+    const t0=performance.now();for(let k=0;k<n;k++){g.setTransform(1,0,0,1,0,0);g.clearRect(0,0,fg.width,fg.height);g.setTransform(px,0,0,px,0,0);fn(g,k);tg.drawImage(fg,0,0,1,1);}
+    const a=(performance.now()-t0)/n,t1=performance.now();for(let k=0;k<n;k++){g.setTransform(1,0,0,1,0,0);g.clearRect(0,0,fg.width,fg.height);tg.drawImage(fg,0,0,1,1);}
+    return +(a-(performance.now()-t1)/n).toFixed(2);},   // minus the cost of the flush itself
+  peek(p){holdP=p;render(performance.now()/1000,0);return ride.stats.ms;},
+  seek(t,i=vi){trans=null;holdP=null;if(i!==vi)load(i);else restart();if(done!==S.level.id+':'+fg.width){printed=-1;printBg(true);}$('#auto').checked=true;while(world.status==='run'&&world.t<t)step(world,S.level,autopilot(world,S.level,{drops:$('#drops').checked}));
+    // warm the camera up to the moment
+    for(let k=0;k<40;k++)render(performance.now()/1000,1/60);paused=true;$('#pause').textContent='P resume';return{status:world.status,t:world.t,r:{...world.rider}};},
+  bench(n=300){const t0=performance.now();for(let k=0;k<n;k++)render(k/60,1/60);const ms=(performance.now()-t0)/n;return{avgMs:+ms.toFixed(3),items:ride.stats.items};},
+  swoop(p,i=vi,chase=S.settings.chase){holdP=null;if(i!==vi)load(i);S.settings.chase=chase;$('#chase').checked=chase;restart();if(done!==S.level.id+':'+fg.width){printed=-1;printBg(true);}trans={p,playing:false};setTp(p);render(performance.now()/1000,1/60);return ride.stats.ms;},
+  benchSwoop(n=60){const t0=performance.now();for(let k=0;k<n;k++){trans={p:k/(n-1),playing:false};render(k/60,1/60);}trans=null;return +((performance.now()-t0)/n).toFixed(3);},
+  seekDrop(t,i=vi){const r=this.seek(t,i);return r;},
+  play(){paused=false;$('#pause').textContent='P pause';},
+  variants:VARIANTS.map(v=>v.name)};
+// The canvas HUD uses the UI fonts; load them before the first draw (falls back to monospace).
+Promise.race([Promise.all([document.fonts.load('8px "Cutive Mono"'),document.fonts.load('700 12px "Big Shoulders Stencil Display"')]),new Promise(r=>setTimeout(r,1500))]).finally(()=>{
+  new ResizeObserver(resize).observe(stage);resize();load(0);requestAnimationFrame(frame);});
+</script>
+</body>
+</html>
