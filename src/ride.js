@@ -20,7 +20,7 @@ const ease=(k,dt)=>1-Math.exp(-k*dt);
 const hash=(i,s=0)=>{let h=Math.imul(i|0,374761393)+Math.imul(s|0,668265263)|0;h=Math.imul(h^(h>>>13),1274126177);return((h^(h>>>16))>>>0)/4294967296;};
 
 // Surface styles
-const ROAD=1,WALL=2,UNDER=3,CAP=4,LINE=5,ROPE=6,HAZ=7,STREAK=8,LANE=9,WELLI=10,GOAL=11,CHEV=12,ICE=13,CRT=14,BOOSTP=15,DROPI=16;
+const ROAD=1,WALL=2,UNDER=3,CAP=4,LINE=5,ROPE=6,HAZ=7,STREAK=8,LANE=9,WELLI=10,GOAL=11,CHEV=12,ICE=13,CRT=14,BOOSTP=15,DROPI=16,SLINGI=17;
 
 // ---------- geometry built once per ride ----------
 function polyArea(p){let a=0;for(let i=0;i<p.length;i++){const q=p[i],r=p[(i+1)%p.length];a+=q[0]*r[1]-r[0]*q[1];}return a/2;}
@@ -164,7 +164,7 @@ function rideScene(c,r,level,sheetNo){const[L,M,D]=c,kind=level.bg.scene;
 export function createRide(){
   let geo=null,worldRef=null,levelRef=null;
   // camera state
-  let chA=0,lastLand=null,yaw=0,heading=1,flipT=0,pitch=P0,shake=0,squash=0,evIdx=0,camX=0,camY=0,camZ=0,chaseInit=false;
+  let chA=0,whip=0,snapT=0,chW=0,slRef=null,lastLand=null,yaw=0,heading=1,flipT=0,pitch=P0,shake=0,squash=0,evIdx=0,camX=0,camY=0,camZ=0,chaseInit=false;
   // per-frame camera basis (module scratch for speed)
   let ex=0,ey=0,ez=0,fx=1,fy=0,fz=0,rx=0,ry=0,rz=1,dx=0,dy=1,dz=0,F=400;
   let g=null,ink=null,pat=null,fog=1,mis=1.5,distOff=0,sideMix=0,tNow=0,AM=1;
@@ -356,14 +356,48 @@ export function createRide(){
     const k=e,size2=clamp(13*s*.5,13,34),y=cy-8-k*44;g.globalAlpha=AM*(clamp(1.4-k*1.4,0,1));g.font=`800 ${size2.toFixed(1)}px ${STENCIL}`;g.textAlign='center';g.textBaseline='middle';
     g.fillStyle=ink.mid;g.fillText('+'+dp.v,cx+1.6,y+1.2);g.fillStyle=ink.key;g.fillText('+'+dp.v,cx,y);g.textAlign='left';}
 
+  // The sling: a ring standing across the track (thick key ring, mid plate out of register, ticks like
+  // a gauge, a light-ink face) with a big printed arrow for the exit direction, turned to face you as
+  // far as the aim allows. A faint dashed circle in the page plane shows the orbit it will swing you on.
+  function drawSling(o,d,t){const sl=o.s,rc=sl.rc||34,ro=sl.ro||27,n=36,near=clamp((Math.hypot(sl.x-ex,sl.y-ey,ez)-rc*1.3)/(rc*2.2),0,1),f=fogOf(d)*(.35+.65*near);   // fades as you enter it, so it never blinds the whip
+    if(sideMix>0){g.globalAlpha=AM*(sideMix);g.strokeStyle=ink.key;g.lineWidth=3;g.beginPath();for(let i=0;i<=n;i++){const a=i/n*TAU;if(pt(sl.x+Math.cos(a)*rc,sl.y+Math.sin(a)*rc,0))i?g.lineTo(sx1,sy1):g.moveTo(sx1,sy1);}g.stroke();}
+    const P=new Float32Array(n*3);for(let i=0;i<n;i++){const a=i/n*TAU;P[i*3]=sl.x;P[i*3+1]=sl.y+Math.sin(a)*rc;P[i*3+2]=Math.cos(a)*rc;}
+    fillPoly(P,ink.light,.35*f*near);
+    // orbit path in the page plane
+    g.globalAlpha=AM*(.55*f);g.strokeStyle=ink.key;g.lineWidth=1.3;g.setLineDash([3,4]);g.beginPath();let on=false;
+    for(let i=0;i<=n;i++){const a=i/n*TAU;if(pt(sl.x+Math.cos(a)*ro,sl.y+Math.sin(a)*ro,0)){on?g.lineTo(sx1,sy1):g.moveTo(sx1,sy1);on=true;}else on=false;}g.stroke();g.setLineDash([]);
+    // the ring and its gauge ticks
+    const ring=(k,ox,oy)=>{let sc=0,cnt=0;g.beginPath();for(let i=0;i<n;i++){const a=i/n*TAU,b=(i+1)/n*TAU;
+      if(seg(sl.x,sl.y+Math.sin(a)*rc*k,Math.cos(a)*rc*k,sl.x,sl.y+Math.sin(b)*rc*k,Math.cos(b)*rc*k)){g.moveTo(sx1+ox,sy1+oy);g.lineTo(sx2+ox,sy2+oy);sc+=ss1;cnt++;}}return cnt?sc/cnt:0;};
+    g.lineCap='round';g.globalAlpha=AM*(f);
+    g.strokeStyle=ink.mid;let sc=ring(1,mis+1,(mis+1)*.7);if(sc){g.lineWidth=clamp(6.5*sc,1.4,26);g.stroke();}
+    g.strokeStyle=ink.key;sc=ring(1,0,0);if(sc){g.lineWidth=clamp(6.5*sc,1.4,26);g.stroke();}
+    g.beginPath();let tw=0;for(let i=0;i<12;i++){const a=i/12*TAU,c=Math.cos(a),s_=Math.sin(a);if(seg(sl.x,sl.y+s_*rc*1.12,c*rc*1.12,sl.x,sl.y+s_*rc*1.3,c*rc*1.3)){g.moveTo(sx1,sy1);g.lineTo(sx2,sy2);tw=ss1;}}
+    if(tw){g.lineWidth=clamp(2*tw,.8,8);g.stroke();}g.lineCap='butt';
+    // the exit arrow: long axis along the aim, flat face turned toward the camera
+    const ux=Math.cos(sl.a),uy=Math.sin(sl.a);let vx=ex-sl.x,vy=ey-sl.y,vz=ez;const vl=Math.hypot(vx,vy,vz)||1;vx/=vl;vy/=vl;vz/=vl;
+    let wx=uy*vz,wy=-ux*vz,wz=ux*vy-uy*vx;const wl=Math.hypot(wx,wy,wz);if(wl<.05){wx=rx;wy=ry;wz=rz;}else{wx/=wl;wy/=wl;wz/=wl;}
+    const A=[[-.35,.13],[1.05,.13],[1.05,.42],[1.75,0],[1.05,-.42],[1.05,-.13],[-.35,-.13]],Q=new Float32Array(A.length*3);
+    A.forEach(([u,v],i)=>{Q[i*3]=sl.x+(ux*u+wx*v)*rc;Q[i*3+1]=sl.y+(uy*u+wy*v)*rc;Q[i*3+2]=wz*v*rc;});
+    const fa=f*near;if(fa>.02&&fillPoly(Q,ink.mid,fa,mis*1.4,mis)){fillPoly(Q,ink.key,fa);}}
+  // Speed streaks while whipping round a sling: short ink dashes flying out from the centre.
+  function drawWhipStreaks(t,k){g.globalAlpha=AM*(.75*whip*k);g.strokeStyle=ink.mid;g.lineWidth=1.8;g.lineCap='round';g.beginPath();
+    for(let i=0;i<30;i++){const a=i/30*TAU+hash(i,3)*.2,ph=((t*2.6+hash(i,5))%1),r0=110+ph*300,len=24+ph*50;const c=Math.cos(a),s_=Math.sin(a)*.72;
+      g.moveTo(CX+c*r0,CY+s_*r0);g.lineTo(CX+c*(r0+len),CY+s_*(r0+len));}g.stroke();g.lineCap='butt';}
+
   // collected drops: splash and number drawn over the world (never hidden behind a surface)
   function drawDropFx(world,t){(world.drops||[]).forEach((dp,i)=>{if(dp.got&&world.t-dp.gotT<=1)drawDrop({dp,i},0,t);});}
 
   // ---------- per-frame ----------
   function setCamera(world,S,dt,t){const r=world.rider,set=S.settings||{},rm=!!set.reducedMotion,chase=!!set.chase;
+    // The sling whip: while orbiting, the first-person view follows the rider's velocity round the ring
+    // (turn rate capped), the lens widens and the plates slip; on release it snaps forward.
+    const inSling=r.sling!=null&&r.sling>=0,whipOn=inSling&&!rm;
+    whip+=((whipOn?1:0)-whip)*ease(whipOn?14:3.5,dt);snapT=Math.max(0,snapT-dt);
     // heading: the smoothed sign of vx; a sustained reversal becomes a quick turn-around
-    if(Math.abs(r.vx)>25&&Math.sign(r.vx)!==heading){flipT+=dt;if(flipT>.12){heading=-heading;flipT=0;}}else flipT=0;
-    const yawT=heading>0?0:Math.PI;yaw+=(yawT-yaw)*ease(rm?6:10,dt);
+    // (in the sling's orbit the first-person view turns at once; chase holds its side to watch the whip)
+    if(Math.abs(r.vx)>25&&Math.sign(r.vx)!==heading&&!(inSling&&chase)){flipT+=dt;if(flipT>(whipOn?0:.12)){heading=-heading;flipT=0;}}else flipT=0;
+    const yawT=heading>0?0:Math.PI;yaw+=clamp((yawT-yaw)*ease(rm?6:whipOn||snapT>0?12:10,dt),-9*dt,9*dt);
     // pitch: follow the velocity angle a little; tilt down while falling to show the landing
     const hv=Math.max(80,Math.abs(r.vx));let pt0=P0+.28*Math.atan2(r.vy,hv);
     lastLand=null;
@@ -376,7 +410,9 @@ export function createRide(){
     // further down, and rolls with the wire's sway. Roads are untouched (tr→0).
     const trT=r.grounded?(r.groundKind==='line'?1:r.groundKind==='rope'?.5:0):(r.airT<.25?tr:0);tr+=(trT-tr)*ease(4,dt);
     pt0+=.16*tr;
-    pitch+=(clamp(pt0,-.5,.85)-pitch)*ease(r.grounded?6:4,dt);
+    if(inSling){lastLand=null;pt0=whipOn?clamp(Math.atan2(r.vy,Math.max(1,Math.abs(r.vx))),-1.3,1.3):P0+.28*Math.atan2(r.vy,hv);}
+    const lim=whipOn?1.3:snapT>0?1.1:.85,rate=whipOn?8:snapT>0?14:r.grounded?6:4;
+    pitch+=clamp((clamp(pt0,-Math.max(.5,lim-.35),lim)-pitch)*ease(rate,dt),-(whipOn?8:20)*dt,(whipOn?8:20)*dt);
     const rollMax=(set.bob?.05:.02)*(rm?.3:1),rollT=tr*heading*clamp((r.sway||0)*rollMax+clamp(r.vz/500,-1,1)*rollMax*.35,-.08,.08);roll+=(rollT-roll)*ease(6,dt);
     const edgeZ=(r.groundHw||WIDTH.line)+R*.4;danger=r.grounded&&r.groundKind==='line'?clamp((Math.abs(r.z)-.4*edgeZ)/(.55*edgeZ),0,1):0;
     dgSide=Math.sign(r.z)||1;dgX=r.x;dgY=r.y;dgHw=r.groundHw;
@@ -385,14 +421,20 @@ export function createRide(){
     if(chase){// sit behind along the slope you're riding, so a steep line never passes over the camera
       chA+=(clamp(Math.atan2(r.vy,Math.max(60,Math.abs(r.vx))),-.75,.75)-chA)*ease(3,dt);const bk=95-15*tr;
       tx=r.x-fh*bk*Math.cos(chA);ty=r.y-bk*Math.sin(chA)-46+10*tr;tz=r.z-fzh*bk*Math.cos(chA);
+      chW+=((inSling?1:0)-chW)*ease(inSling?8:4,dt);
+      if(chW>.01&&slRef){const sl=slRef;tx+=(sl.x-fh*(sl.ro+120)-tx)*chW;ty+=(sl.y-38-ty)*chW;tz+=(0-tz)*chW;}
       if(!chaseInit){camX=tx;camY=ty;camZ=tz;chaseInit=true;}
       const k=ease(7,dt);camX+=(tx-camX)*k;camY+=(ty-camY)*k;camZ+=(tz-camZ)*k;ex=camX;ey=camY;ez=camZ;}
     else{chaseInit=false;const back=22-6*tr,up=17+4*tr;ex=r.x-fh*back;ey=r.y-up;ez=r.z-fzh*back;
-      if(set.bob&&!rm&&r.grounded)ey+=Math.sin(r.a*1.1)*1.3;}
+      if(set.bob&&!rm&&r.grounded)ey+=Math.sin(r.a*1.1)*1.3;
+      if(whip>0){// ride the orbit from just behind the ball, along the view
+        const cp=Math.cos(pitch),sp=Math.sin(pitch),w=whip;ex+=(r.x-fh*cp*14-ex)*w;ey+=(r.y-sp*14-6-ey)*w;ez+=(r.z-fzh*cp*14-ez)*w;}}
     if(shake>0&&!rm){ex+=(Math.random()-.5)*shake;ey+=(Math.random()-.5)*shake;}
     let th=pitch;
-    if(chase){const lx=r.x+fh*40-ex,ly=r.y-6-ey,lz=r.z+fzh*40-ez;th=Math.atan2(ly,Math.hypot(lx,lz))+(pitch-P0)*.5;}
-    applyPose(ex,ey,ez,yaw,th,CX/Math.tan(clamp(set.fov||90,40,130)*Math.PI/360),roll*(chase?.6:1));
+    if(chase){let ax=r.x+fh*40,ay=r.y-6,az=r.z+fzh*40;if(chW>.01&&slRef){ax+=(slRef.x-ax)*chW;ay+=(slRef.y-ay)*chW;az+=(0-az)*chW;}
+      const lx=ax-ex,ly=ay-ey,lz=az-ez;th=Math.atan2(ly,Math.hypot(lx,lz))+(pitch-P0)*.5*(1-chW);}
+    const kick=rm?0:(chase?9:18)*whip-(chase?3:8)*(snapT/.35)*(snapT/.35);   // lens: wide in the whip, a tight punch on release
+    applyPose(ex,ey,ez,yaw,th,CX/Math.tan(clamp((set.fov||90)+kick,40,140)*Math.PI/360),roll*(chase?.6:1));
     return th;}
   // Any camera: eye position, yaw (0 = looking along +x, π/2 = +z) and pitch (down is positive).
   // Roll (radians, clockwise on screen) turns the right/down axes about the view direction.
@@ -422,6 +464,7 @@ export function createRide(){
       for(const ln of wd.lanes){const p=ln.pts[0],q=ln.pts[ln.pts.length-1],mx=(p[0]+q[0])/2,my=(p[1]+q[1])/2;if(!ahead(mx,my,0,wd.hw+20))continue;
         const it=item();it.d=dist2(mx,my,0);it.st=LANE;it.o={pts:ln.pts,hw:wd.hw,s0:-t*40};}});
     world.wells.forEach(w=>{if(!ahead(w.x,w.y,0,WELL.range))return;const it=item();it.d=dist2(w.x,w.y,0);it.st=WELLI;it.o={w};});
+    (world.slings||[]).forEach(sl=>{if(!ahead(sl.x,sl.y,0,(sl.rc||34)*1.9))return;const it=item();it.d=dist2(sl.x,sl.y,0);it.st=SLINGI;it.o={s:sl};});
     const G=levelRef.goal;if(ahead(G.x,G.y,0,G.r*1.5)){const it=item();it.d=dist2(G.x,G.y,0);it.st=GOAL;}
     // boost pads lie on a surface: sort them just in front of it
     (world.boosts||[]).forEach(b=>{for(let s0=0;s0<b.len;s0+=20){const s1=Math.min(b.len,s0+20),mx=b.ax+b.tx*(s0+s1)/2,my=b.ay+b.ty*(s0+s1)/2;
@@ -513,6 +556,10 @@ export function createRide(){
     x.strokeStyle=ink.mid;x.setLineDash([5,3]);x.lineWidth=2.2;x.beginPath();for(const wd of world.winds)wd.pts.forEach((q,i)=>{const[u,v]=m(q[0],q[1]);i?x.lineTo(u,v):x.moveTo(u,v);});x.stroke();x.setLineDash([]);
     x.strokeStyle=ink.key;x.fillStyle=ink.key;x.lineWidth=1;for(const w of world.wells){const[u,v]=m(w.x,w.y);x.beginPath();x.arc(u,v,2.5,0,TAU);x.fill();x.beginPath();x.arc(u,v,WELL.range*IS*.4,0,TAU);x.stroke();}
     {const[u,v]=m(L.goal.x,L.goal.y);x.lineWidth=1.8;x.beginPath();x.arc(u,v,L.goal.r*IS*1.1,0,TAU);x.stroke();}
+    for(const sl of world.slings||[]){const[u,v]=m(sl.x,sl.y),rr=(sl.rc||34)*IS,ca=Math.cos(sl.a),sa=Math.sin(sl.a),L2=rr*2.3;
+      x.strokeStyle=ink.key;x.lineWidth=1.6;x.beginPath();x.arc(u,v,rr,0,TAU);x.stroke();
+      x.strokeStyle=ink.mid;x.fillStyle=ink.mid;x.lineWidth=1.4;x.beginPath();x.moveTo(u,v);x.lineTo(u+ca*L2,v+sa*L2);x.stroke();
+      x.beginPath();x.moveTo(u+ca*(L2+3),v+sa*(L2+3));x.lineTo(u+ca*L2-sa*2.4,v+sa*L2+ca*2.4);x.lineTo(u+ca*L2+sa*2.4,v+sa*L2-ca*2.4);x.closePath();x.fill();}
     x.restore();return c;}
   function drawInset(world,S,t,edge){const m=(x,y)=>[IX+x*IS,IY+y*IS],inBox=(x,y)=>x>IX&&x<IX+IW&&y>IY&&y<IY+IH;
     const c=insetStatic(world),M=12;
@@ -552,23 +599,25 @@ export function createRide(){
       const cv=document.createElement('canvas');cv.width=pw;cv.height=ph;const x=cv.getContext('2d');x.imageSmoothingQuality='high';x.drawImage(src,0,0,pw,ph);return cv;},
 
     reset(world,level,S){worldRef=world;levelRef=level;geo=buildGeometry(world,level);ropeBuf.length=0;
-      heading=Math.sign(world.rider.vx)||1;yaw=heading>0?0:Math.PI;flipT=0;pitch=P0;tr=0;roll=0;danger=0;chA=0;shake=0;squash=0;evIdx=0;chaseInit=false;lastLand=null;},
+      heading=Math.sign(world.rider.vx)||1;yaw=heading>0?0:Math.PI;flipT=0;pitch=P0;tr=0;roll=0;danger=0;chA=0;whip=0;snapT=0;chW=0;slRef=null;shake=0;squash=0;evIdx=0;chaseInit=false;lastLand=null;},
 
     draw(gc,world,level,S,t,dt){const t0=performance.now();begin(api,gc,world,level,S);
       const set=S.settings||{},rm=!!set.reducedMotion;dt=clamp(dt||1/60,0,.05);
       for(;evIdx<world.events.length;evIdx++){const e=world.events[evIdx];
-        if(e.type==='land'){shake=Math.max(shake,clamp((e.v||0)/90,0,6));squash=1;}else if(e.type==='bounce'){shake=Math.max(shake,3);squash=1;}}
+        if(e.type==='land'){shake=Math.max(shake,clamp((e.v||0)/90,0,6));squash=1;}else if(e.type==='bounce'){shake=Math.max(shake,3);squash=1;}
+        else if(e.type==='sling'){slRef=world.slings&&world.slings[e.i]||null;}else if(e.type==='slingOut'&&!rm){snapT=.35;squash=1;}}
       shake*=Math.exp(-9*dt);squash*=Math.exp(-7*dt);
       // misregistration: a base offset that grows with speed; a crash snaps it into clean register
       const r=world.rider,failed=world.status==='fell'||world.status==='popped'||world.status==='stuck';
-      mis=failed?0:rm?1.4:1.4+clamp((r.speed-150)/140,0,1)*2.2;
+      mis=failed?0:rm?1.4:1.4+clamp((r.speed-150)/140,0,1)*2.2+whip*5;
       if(failed)shake=0;
       distOff=0;sideMix=0;
       const th=setCamera(world,S,dt,t);
       g.save();g.lineJoin='round';
       paintWorld(world,t);
+      if(whip>.03)drawWhipStreaks(t,set.chase?.5:1);
       const edge=edgeAhead(world);
-      drawAids(world,S,t,edge);drawDropFx(world,t);
+      if(!(r.sling>=0))drawAids(world,S,t,edge);drawDropFx(world,t);
       g.globalAlpha=AM*(1);
       if(set.chase)drawBallChase(world);else drawBallFP(world);
       drawInset(world,S,t,edge);
@@ -581,8 +630,8 @@ export function createRide(){
     drawTransition(gc,world,level,S,t,p){const t0=performance.now();begin(api,gc,world,level,S);p=clamp(p,0,1);
       const set=S.settings||{},r=world.rider;
       // The pose draw() will use on its first frame, computed without disturbing its smoothing state.
-      const sv=[yaw,heading,flipT,pitch,camX,camY,camZ,chaseInit,lastLand,shake,tr,roll,danger,chA];shake=0;const th1=setCamera(world,S,1/60,t);
-      const E={x:ex,y:ey,z:ez,yaw,th:th1,F};[yaw,heading,flipT,pitch,camX,camY,camZ,chaseInit,lastLand,shake,tr,roll,danger,chA]=sv;
+      const sv=[yaw,heading,flipT,pitch,camX,camY,camZ,chaseInit,lastLand,shake,tr,roll,danger,chA,whip,snapT,chW];shake=0;const th1=setCamera(world,S,1/60,t);
+      const E={x:ex,y:ey,z:ez,yaw,th:th1,F};[yaw,heading,flipT,pitch,camX,camY,camZ,chaseInit,lastLand,shake,tr,roll,danger,chA,whip,snapT,chW]=sv;
       // Channels. Dolly (distance + lens) is a confident ease-in-out; the swing starts a beat later;
       // the aim point drifts from the page centre to just ahead of the rider.
       const cub=x=>x<.5?4*x*x*x:1-Math.pow(-2*x+2,3)/2,sine=x=>-(Math.cos(Math.PI*x)-1)/2;
@@ -645,6 +694,7 @@ export function createRide(){
       case GOAL:drawGoal(it.o,d,t);break;
       case BOOSTP:drawBoostPiece(it.o,d,t);break;
       case DROPI:drawDrop(it.o,d,t);break;
+      case SLINGI:drawSling(it.o,d,t);break;
       default:drawChunk(it.o,d);}}}
   // Backdrop: pitch moves the horizon, yaw slides it (a turn-around, the swoop), soft-clamped to the margin.
   function bgFor(th,yw,z,scale,fr=F){const marginY=H*(scale-1)/2,marginX=W*(scale-1)/2;

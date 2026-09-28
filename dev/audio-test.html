@@ -45,7 +45,7 @@ table{border-collapse:collapse;font-size:12px}td,th{border:1px solid var(--key);
 </div>
 <div>
 <h2>DRAWING PAD</h2>
-<div class="row" style="margin-bottom:6px">Tool <select id="tool"><option>line</option><option>wind</option><option>rope</option><option>well</option></select>
+<div class="row" style="margin-bottom:6px">Tool <select id="tool"><option>line</option><option>wind</option><option>rope</option><option>well</option><option>sling</option></select>
 <label><input type="checkbox" id="budget"> Ink runs out after 600 units</label><span id="penv"></span></div>
 <canvas id="pad" width="800" height="500"></canvas>
 </div>
@@ -62,6 +62,7 @@ table{border-collapse:collapse;font-size:12px}td,th{border:1px solid var(--key);
   <label><input type="checkbox" id="wind"> in wind</label>
   <label><input type="checkbox" id="boost"> on boost</label>
   <button id="crk">Touch crumble</button>
+  <button id="orbit">Sling orbit (0.8 s)</button>
 </div>
 
 <h2>CHECKS</h2>
@@ -88,6 +89,7 @@ $('winseq').onclick=()=>{A.event({type:'win'});[0,1,2,3].forEach((i,k)=>setTimeo
 // fake world for events (land surface comes from the ride sim if running)
 const EV=[['jump',{type:'jump'}],['land soft',{type:'land',v:120}],['land hard',{type:'land',v:600}],['bounce',{type:'bounce'}],
   ['drop 25',{type:'drop',v:25}],['drop 15',{type:'drop',v:15}],['drop 40',{type:'drop',v:40}],['boost',{type:'boost'}],['crumble',{type:'crumble',i:0}],
+  ['sling capture',{type:'sling',i:0}],['slingOut slow',{type:'slingOut',i:0,v:330}],['slingOut fast',{type:'slingOut',i:0,v:700}],
   ['fell',{type:'fell'}],['popped',{type:'popped'}],['stuck',{type:'stuck'}],['win',{type:'win'}]];
 for(const[l,e]of EV)mk($('ev'),l,()=>A.event({...e,t:0}));
 mk($('ev'),'reset drop streak',()=>{A.stopRide();if(riding){world=mkWorld();}});
@@ -101,10 +103,10 @@ $('swskip').onclick=()=>swoop(1100,.3);
 const pad=$('pad'),pg=pad.getContext('2d');let pen=null,inkLeft=600;
 function padPt(e){const r=pad.getBoundingClientRect();return[(e.clientX-r.left)/r.width*800,(e.clientY-r.top)/r.height*500];}
 pad.onpointerdown=e=>{pad.setPointerCapture(e.pointerId);const p=padPt(e),tool=$('tool').value;inkLeft=600;
-  pen={p,t:performance.now(),tool,a:p};A.draw(tool,'start',0);if(tool==='well'){pg.strokeStyle='#3d5588';pg.lineWidth=2;pg.beginPath();pg.arc(p[0],p[1],14,0,7);pg.stroke();pen=null;}};
+  pen={p,t:performance.now(),tool,a:p};A.draw(tool,'start',0);if(tool==='sling'){pg.strokeStyle='#3d5588';pg.lineWidth=2;pg.beginPath();pg.arc(p[0],p[1],20,0,7);pg.stroke();}if(tool==='well'){pg.strokeStyle='#3d5588';pg.lineWidth=2;pg.beginPath();pg.arc(p[0],p[1],14,0,7);pg.stroke();pen=null;}};
 pad.onpointermove=e=>{if(!pen)return;const p=padPt(e),t=performance.now(),dt=Math.max(1,t-pen.t)/1000,d=Math.hypot(p[0]-pen.p[0],p[1]-pen.p[1]),sp=d/dt;
   if($('budget').checked){inkLeft-=d;if(inkLeft<0){A.inkEmpty();pen.p=p;pen.t=t;return;}}
-  A.draw(pen.tool,'move',sp);$('penv').textContent=`speed ${sp.toFixed(0)} u/s`;
+  A.draw(pen.tool,'move',sp);if(pen.tool==='sling'){pen.p=p;pen.t=t;return;}$('penv').textContent=`speed ${sp.toFixed(0)} u/s`;
   pg.strokeStyle=pen.tool==='wind'?'#ff6c2f':'#3d5588';pg.lineWidth=pen.tool==='rope'?3:2;pg.setLineDash(pen.tool==='rope'?[8,5]:[]);
   pg.beginPath();if(pen.tool==='rope'){pg.clearRect(0,0,800,500);pg.moveTo(...pen.a);}else pg.moveTo(...pen.p);pg.lineTo(...p);pg.stroke();pen.p=p;pen.t=t;};
 pad.onpointerup=pad.onpointercancel=()=>{if(!pen)return;A.draw(pen.tool,'end',0);pen=null;};
@@ -124,6 +126,8 @@ function rideFrame(ts){if(!riding)return;const dt=Math.min(.05,(ts-last)/1000||1
 $('rgo').onclick=()=>{if(!riding){riding=true;world=mkWorld();T=0;last=performance.now();requestAnimationFrame(rideFrame);}};
 $('rstop').onclick=()=>{riding=false;A.stopRide();};
 $('crk').onclick=()=>{if(world){world.crumbles[0]={touchedAt:T,gone:false};setTimeout(()=>{world.crumbles[0].gone=true;A.event({type:'crumble',i:0});},350);}};
+$('orbit').onclick=()=>{if(!world)return;const r=world.rider,t0=performance.now();A.event({type:'sling',i:0});r.sling=0;
+  const f=()=>{const k=(performance.now()-t0)/800;if(k<1){r.slingK=k;requestAnimationFrame(f);}else{r.sling=-1;r.slingK=0;A.event({type:'slingOut',i:0,v:560});}};f();};
 $('spd').oninput=e=>$('spdv').textContent=e.target.value;$('sway').oninput=e=>$('swayv').textContent=e.target.value;
 
 // ---- stats: logged every second, so node growth would show ----
@@ -157,6 +161,9 @@ const TESTS={
   ...Object.fromEntries(['line','wind','rope'].map(tl=>['draw '+tl+' (fast)',{dur:1.2,run:(a,oc)=>{a.draw(tl,'start',0);frames(oc,1,(t)=>a.draw(tl,t>.9?'end':'move',1200));}}])),
   'draw rope (loop only)':{dur:1,run:(a,oc)=>{a.draw('rope','start',0);frames(oc,.95,()=>a.draw('rope','move',1200));}},
   'ride boost (loop only)':rideM('pad',400,{boost:1}),
+  'sling capture':{run:a=>a.event({type:'sling'})},'slingOut v700':{run:a=>a.event({type:'slingOut',v:700})},'slingOut v330':{run:a=>a.event({type:'slingOut',v:330})},
+  'draw sling place':{run:a=>a.draw('sling','start',0)},'draw sling ratchet tick':{run:a=>a.draw('sling','move',400)},
+  'ride sling orbit':{dur:1.2,run:(a,oc)=>{const w=fw(450,'air');w.rider.sling=0;w.rider.slingK=0;a.ride(w,1/60);frames(oc,1.1,t=>{w.rider.slingK=Math.min(1,t/.9);a.ride(w,1/60);});}},
   'swoop full':{dur:1.4,run:(a,oc)=>{a.transition(0);frames(oc,1.3,t=>a.transition(Math.min(1,t/1.1)));}},
   'ride road 500':rideM('block',500),'ride road 150':rideM('block',150),'ride wire 400':rideM('line',400),'ride wire+sway':rideM('line',300,{sway:1}),
   'ride rope':rideM('rope',200),'ride ice 400':rideM('ice',400),'ride air 500':rideM('air',500),'ride wind':rideM('air',100,{wind:1}),'ride boost':rideM('block',400,{boost:1}),

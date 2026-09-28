@@ -319,3 +319,55 @@ Round A is integrated and verified: all 10 levels win in the real app, the swoop
   - Hint now says wells pull "while they're in the air".
   - With no input, 125/607 single-well cells win, smoothness 70%, and all intuitive placements win.
 - Side view adds the optional hook `hooks.moved(prevItems)` for drag-moves of wells and rope ends. app.js keeps an undo history (`'add'` or `{prev}`) so Z reverts moves too.
+
+---
+# Contract v4: the slingshot replaces the gravity well (2026-09-28)
+User feedback: the gravity well "still doesn't feel right", with invisible rules and a confusing intro. Decision: replace it with a **sling**, a ring you place and aim.
+
+## Rules (physics)
+- **Item:** `{type:'sling', x, y, a}`, where `a` is the exit angle in radians (0 = right, y down, so −π/2 = straight up). Cost `COST.sling = 120`.
+- **Capture:** the rider's centre passes within `SLING.rc` (~34) of (x,y), with `|z| < SLING.rc`, airborne or grounded. It won't re-capture from the same sling within `SLING.cooldown` (~0.5 s) of release.
+- **Orbit (kinematic, no gravity, collisions skipped):**
+  - Speed `s = clamp(max(entrySpeed, SLING.minSpeed≈320), …, SLING.maxSpeed≈700)`.
+  - The rider moves on a circle of radius `SLING.ro` (~0.8·rc) around the centre, turning in the direction set by the entry (sign of cross(r, v)).
+  - It sweeps until the tangent equals `a` (at least `SLING.minSweep` ≈ 0.6 rad, less than 2π), and z eases to 0.
+- **Release:**
+  - Position on the circle at the exit angle; velocity = `unit(a) · s · SLING.boost (≈1.1)`, capped at maxSpeed.
+  - Gravity resumes.
+  - Events `{type:'sling', i, t}` on capture and `{type:'slingOut', i, t, v}` on release.
+- **World and rider:**
+  - `world.slings = [{x,y,a,rc,ro}]`
+  - `rider.sling` = captured index or −1; `rider.slingK` = orbit progress 0..1; `rider.slingAng` = current polar angle
+- **Legacy `well` items still simulate** (so old drafts and tests don't break), but no level offers the well tool any more.
+- **Exports:** add `slingPreview(sling, speed=450, t=.45) -> [[x,y],…]`, the release point plus a ballistic arc under gravity for t seconds. The side view uses it so the preview matches the physics exactly.
+
+## Levels
+- Level 6 becomes **"Slingshot"** (id `sling`, tools `['sling']`). It's a "watch, then do" intro: the rider falls off a ledge toward spikes, and the ring is up and away. Place a sling in the fall, aim at the ring.
+- Grand tour swaps `'well'` for `'sling'` in its tools.
+- **validate — sling learnability:** for sling levels, placing a sling anywhere on the natural (no-item) fall path and aiming it straight at the goal must win in a clear majority of those placements. That's the "put it in your path, point it at the ring" rule. Also keep a smoothness check over placement with the best aim. Drops stay balanced.
+
+## Owners (this round)
+| Work | Owner |
+|---|---|
+| physics.js, levels.js, tools/** | physics/levels agent |
+| side.js (place, move, aim handle, preview arc, ghost orbit) | side agent |
+| ride.js (the sling in first person, the whip camera moment) | ride agent |
+| audio.js (capture whoosh, release thwip) | audio agent |
+| app.js and index.html (Sling tool button, icon, thumbnails, hints; wells hidden) | app agent |
+- **Sling data model and physics landed (2026-09-28, physics agent).** Levels come next.
+  - `COST.sling=120`, and `SLING={rc:34, ro:27, minSpeed:320, maxSpeed:700, minSweep:.6, boost:1.1, cooldown:.5, zEase:6}`.
+  - `world.slings=[{x,y,a,rc,ro}]`. A missing `a` defaults to −π/4.
+  - **Rider fields:** `sling` (−1 or the index), `slingK` (0..1), `slingAng`, and `slingDir` (+1 = angle increasing, which is clockwise on screen since y is down). Also `slingSpeed`, plus `slingLast`/`slingLastT` for the cooldown.
+  - **Events:** `{type:'sling', i, x, y, t}` on capture and `{type:'slingOut', i, x, y, t, v}` on release.
+  - **Orbit:** hazards don't pop you while you're orbiting. The goal ring and drops still count.
+  - **Clarification:** `slingPreview(sling, speed=450, t=.45, dir=1)` takes an optional 4th argument, `dir`. The release point sits on the side of the ring given by the turn direction, and the preview can't know that before the ride. Use +1, or show both sides.
+- **Slingshot level and sling tuning (2026-09-28, physics agent). Contract v4 clarifications:**
+  - **Fling float:** after release, gravity eases back in over `SLING.float` = 0.6 s (∝ t²). A fling flies almost straight at first, so "point it at the ring" is true in play. `slingPreview` integrates exactly the same way, so previews match.
+  - **Tuned constants:** `SLING.minSpeed` is now 380 (release ≥ 418), and the full set is `SLING={rc:34, ro:27, minSpeed:380, maxSpeed:700, minSweep:.6, boost:1.1, cooldown:.5, zEase:6, maxCatches:3, float:.6}`.
+  - **No loops:** a sling can't re-catch you until you've left its capture radius (hysteresis), as well as the 0.5 s cooldown. Each sling catches at most 3 times per ride, after which you pass through. Tested straight up, straight down, and into a wall: every ride ends.
+  - **New rider field:** `rider.slingFly` is the seconds since release, or 9 when not flying.
+  - **Levels:** `pull` is replaced by **`sling`** ("Slingshot", level 6). It's a floating ring (r 40) up and to the right of a ledge you roll off. Grand tour now offers line, wind, rope and sling, and its well solution is gone. No level offers the well any more; legacy wells still simulate.
+  - **validate:**
+    - A sling learnability check: slings on the fall path, aimed at the goal. It fails under 60% on sling-only levels and is reported on mixed levels.
+    - A best-aim smoothness map.
+    - The random sampler understands slings.

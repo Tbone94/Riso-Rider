@@ -96,5 +96,49 @@ for(const [a,b] of [[[[100,150],[500,350]],[[100,350],[500,150]]],[[[100,100],[5
 // 14. Stars with refund: the 2-argument call is unchanged.
 {const L={par:[100,200]};ok('stars with refund',P.stars(L,150)===2&&P.stars(L,150,50)===3&&P.stars(L,90,500)===3&&P.stars(L,250,40)===1&&P.stars(L,250,60)===2,'');}
 
+// ---------- slings (contract v4) ----------
+const evs=(w,t)=>w.events.filter(e=>e.type===t);
+// 15. Entering from each side: passing below the centre turns one way, above the other; release heads along `a`.
+// (start vy −300 makes the ballistic path pass the sling's height at x=300)
+for(const [label,y0] of [['below the centre (ccw)',220],['above the centre (cw)',180]]){
+  const a=-Math.PI/3,L=base({start:{x:100,y:y0,vx:300,vy:-300},hazards:[]});let dir=0,outV=null;
+  const {w,allFinite}=ride(L,[{type:'sling',x:300,y:200,a}],none,1.2,w=>{if(w.rider.sling>=0)dir=w.rider.slingDir;const o=evs(w,'slingOut')[0];if(o&&!outV)outV=[w.rider.vx,w.rider.vy];});
+  const ang=outV?Math.atan2(outV[1],outV[0]):NaN;
+  ok(`sling entry ${label}`,allFinite&&evs(w,'sling').length>=1&&outV&&Math.abs(ang-a)<.2&&dir===(y0>200?-1:1),`dir ${dir} release angle ${ang.toFixed(2)} (aim ${a.toFixed(2)})`);}
+// 16. Slow entry: orbit speed is lifted to minSpeed, release = minSpeed·boost.
+{const L=base({start:{x:260,y:120,vx:0},hazards:[]});let v=null;
+  const {w,allFinite}=ride(L,[{type:'sling',x:262,y:160,a:0}],none,1.5,w=>{const o=evs(w,'slingOut')[0];if(o&&v==null)v=o.v;});
+  ok('sling slow entry',allFinite&&v!=null&&Math.abs(v-P.SLING.launch)<1,`release v ${v&&v.toFixed(0)} (want the fixed launch ${P.SLING.launch})`);}
+// 17. Capture while grounded: rolling along a road into a sling just above it.
+{const L=base({start:{x:30,y:291,vx:200},blocks:[[[0,300],[800,300],[800,322],[0,322]]]});
+  const {w,allFinite}=ride(L,[{type:'sling',x:180,y:280,a:-Math.PI/2.5}],none,2);
+  const up=Math.min(...w.path.map(p=>p[1]));
+  ok('sling capture while grounded',allFinite&&evs(w,'sling').length>=1&&evs(w,'slingOut').length>=1&&up<250,`captures ${evs(w,'sling').length}, highest y ${up.toFixed(0)}`);}
+// 18. Re-capture cooldown: released inside the ring, not re-caught for SLING.cooldown; aimed straight up it
+// catches you again only after you fall back through it.
+{const L=base({start:{x:100,y:200,vx:300,vy:-300},hazards:[]});
+  let early=0;const {w,allFinite}=ride(L,[{type:'sling',x:300,y:200,a:-Math.PI/2}],none,3,w=>{const o=evs(w,'slingOut')[0];if(o&&w.t-o.t<P.SLING.cooldown&&w.rider.sling>=0)early++;});
+  const cap=evs(w,'sling'),out=evs(w,'slingOut'),gap=cap.length>1?cap[1].t-out[0].t:null;
+  ok('sling re-capture cooldown',allFinite&&early===0&&cap.length>=2&&gap>=P.SLING.cooldown,`captures ${cap.length}, second catch ${gap&&gap.toFixed(2)} s after release`);}
+// 19. Sling near a wall: the orbit crosses the wall (collisions skipped); no NaNs, no explosion, clean outcome.
+{const L=base({start:{x:100,y:190,vx:300,vy:-300},blocks:[[[320,100],[340,100],[340,400],[320,400]]],hazards:[[[0,486],[800,486]]]});
+  const {w,maxV,allFinite}=ride(L,[{type:'sling',x:310,y:200,a:-Math.PI/4}],none,8);
+  ok('sling near a wall',allFinite&&maxV<=Math.hypot(P.SLING.maxSpeed,Math.sqrt(2*P.G*(P.H+60)))&&w.status!=='run'&&evs(w,'sling').length<=P.SLING.maxCatches,`status ${w.status} maxV ${maxV.toFixed(0)}`);}
+// 20. A drop on the orbit circle is collected while orbiting.
+{const L=base({start:{x:100,y:200,vx:300,vy:-300},hazards:[],drops:[{x:300,y:200-P.SLING.ro,z:0,v:25}]});
+  let gotInOrbit=false;const {w}=ride(L,[{type:'sling',x:300,y:200,a:Math.PI}],none,1.5,w=>{if(w.drops[0].got&&w.rider.sling>=0&&!gotInOrbit)gotInOrbit=true;});
+  ok('drop collected during an orbit',gotInOrbit&&w.refund===25,`got in orbit ${gotInOrbit}`);}
+// 22. Aimed straight down and straight up: never loops forever. Each sling catches at most maxCatches
+// times, and the ride always ends (no 45 s timeout).
+for(const [label,a,floor] of [['straight down',Math.PI/2,true],['straight up',-Math.PI/2,false],['down onto a road',Math.PI/2,true]]){
+  const L=base({start:{x:100,y:200,vx:300,vy:-300},blocks:label==='down onto a road'?[[[0,300],[800,300],[800,322],[0,322]]]:[],hazards:floor&&label!=='down onto a road'?[[[0,486],[800,486]]]:[]});
+  const {w,allFinite}=ride(L,[{type:'sling',x:300,y:200,a}],none,44);
+  const caps=evs(w,'sling').length;
+  ok(`sling aimed ${label}`,allFinite&&caps<=P.SLING.maxCatches&&w.status!=='run'&&w.t<20,`catches ${caps}, ${w.status} at ${w.t.toFixed(1)} s`);}
+// 21. Autopilot gives no input while orbiting.
+{const L=base({start:{x:100,y:200,vx:300,vy:-300},hazards:[]});const w=P.build(L,[{type:'sling',x:300,y:200,a:0}]);let bad=0;
+  while(w.t<1&&w.status==="run"){P.step(w,L,P.autopilot(w,L));if(w.rider.sling>=0){const i=P.autopilot(w,L,{drops:true});if(i.steer||i.jump||i.push)bad++;}}
+  ok('autopilot idle while orbiting',bad===0,'');}
+
 console.log(bad?`\n${bad} edge case(s) failed`:'\nall edge cases pass');
 process.exit(bad?1:0);

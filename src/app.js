@@ -14,7 +14,7 @@ const pad2=n=>String(n).padStart(2,'0');
 const raf2=f=>requestAnimationFrame(()=>requestAnimationFrame(f));   // "a 2-frame hold"
 
 // ---------- storage (always wrapped: private windows / blocked storage) ----------
-const KEY={progress:'drift.progress.v2',settings:'drift.settings.v1',drafts:'drift.drafts.v1',last:'drift.last.v1'};
+const KEY={progress:'drift.progress.v2',settings:'drift.settings.v1',drafts:'drift.drafts.v1',last:'drift.last.v1',coached:'drift.coached.v1'};
 const store={
   get(k,d){try{const v=localStorage.getItem(k);return v==null?d:JSON.parse(v);}catch(e){return d;}},
   set(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}}};
@@ -41,11 +41,13 @@ const S={li:0,level:null,items:[],tool:'line',mode:'edit',stroke:null,ink:null,p
   settings:sanitize(store.get(KEY.settings,null))};
 const progress=store.get(KEY.progress,{})||{};
 const drafts=store.get(KEY.drafts,{})||{};
+const coached=store.get(KEY.coached,{})||{};   // one-time tips already shown, by name
+function coachOnce(name){if(coached[name])return false;coached[name]=1;store.set(KEY.coached,coached);return true;}
 
 // ---------- renderers ----------
 // hooks.draw is offered in case side.js reports drawing phases itself; otherwise app.js infers them (see "drawing sounds").
 let sideDraws=false;
-// hooks.moved(prevItems): side.js dragged a well or rope end; keep the pre-drag items so Z can undo the move.
+// hooks.moved(prevItems): side.js dragged a sling, well or rope end; keep the pre-drag items so Z can undo the move.
 const hooks={onChange,toast,flashInk,draw(tool,phase,speed){sideDraws=true;A('draw',tool,phase,speed);},moved(prev){hist.push({prev});}};
 let side=null,ride=null,audio=null;
 try{audio=audioMod&&audioMod.createAudio();}catch(e){report('createAudio',e);}
@@ -163,6 +165,10 @@ function printThumb(L){const w=148,h=92,s=w/W;
       x.moveTo(px_-tx*9-ty*9,py_-ty*9+tx*9);x.lineTo(px_,py_);x.lineTo(px_-tx*9+ty*9,py_-ty*9-tx*9);}x.stroke();});
   (L.drops||[]).forEach(d=>{const r=d.v>=40?13:d.v>=25?11:9;x.fillStyle=M;x.beginPath();x.moveTo(d.x,d.y-r*1.7);   // drops: little ink drops
     x.quadraticCurveTo(d.x+r*1.1,d.y-r*.2,d.x,d.y+r);x.quadraticCurveTo(d.x-r*1.1,d.y-r*.2,d.x,d.y-r*1.7);x.fill();x.strokeStyle=K;x.lineWidth=3;x.stroke();});
+  (L.slings||[]).forEach(sl=>{const a=+sl.a||0,ex=sl.x+Math.cos(a)*62,ey=sl.y+Math.sin(a)*62;   // slings: a ring and the arrow it flings along
+    x.strokeStyle=K;x.lineWidth=8;x.beginPath();x.arc(sl.x,sl.y,26,0,TAU);x.stroke();
+    x.strokeStyle=M;x.lineWidth=8;x.beginPath();x.moveTo(sl.x,sl.y);x.lineTo(ex,ey);
+    x.moveTo(ex-Math.cos(a-.5)*20,ey-Math.sin(a-.5)*20);x.lineTo(ex,ey);x.lineTo(ex-Math.cos(a+.5)*20,ey-Math.sin(a+.5)*20);x.stroke();});
   x.strokeStyle=hex(L.bg.inks[1]);x.lineWidth=10;(L.hazards||[]).forEach(p=>{x.beginPath();p.forEach((q,i)=>x[i?'lineTo':'moveTo'](q[0],q[1]));x.stroke();});
   x.strokeStyle=hex(L.bg.inks[2]);x.lineWidth=9;x.beginPath();x.arc(L.goal.x,L.goal.y,L.goal.r,0,TAU);x.stroke();
   x.fillStyle=hex(L.bg.inks[1]);x.beginPath();x.arc(L.start.x,L.start.y,14,0,TAU);x.fill();
@@ -187,7 +193,7 @@ function renderJobs(){const box=$('#jobs');box.innerHTML='';LEVELS.forEach((L,i)
 // ---------- level load ----------
 function load(i){i=clamp(i|0,0,LEVELS.length-1);cancelRide();hideWin();hideOffer();hideSlip();
   const L=LEVELS[i];S.li=i;S.level=L;S.mode='edit';S.stroke=null;S.ghost=null;S.falls=0;lastCleared=null;lastRide=null;swoopedLevel=null;
-  S.items=cloneItems(drafts[L.id]||[]);hist=[];lastLen=S.items.length;
+  S.items=cloneItems(drafts[L.id]||[]).filter(it=>L.tools.includes(it.type));hist=[];lastLen=S.items.length;   // e.g. wells from before the sling
   S.ink={light:hex(L.bg.inks[0]),mid:hex(L.bg.inks[1]),key:hex(L.bg.inks[2])};
   S.pat={light:dotPattern(S.ink.light,7,1.9),lightDense:dotPattern(S.ink.light,6,2.4),mid:dotPattern(S.ink.mid,6,1.7),key:dotPattern(S.ink.key,5,1.6)};
   const rs=document.documentElement.style,I=S.ink;
@@ -238,7 +244,8 @@ function applyMode(){const m=S.mode;stage.classList.toggle('editing',m==='edit')
   if(m!=='ride'){bgr.style.transform='';bgT='';}document.documentElement.dataset.mode=m;ui();requestAnimationFrame(nudge);}
 function onChange(){lastActivity=performance.now();lastCleared=null;
   if(S.items.length>lastLen)hist.push('add');lastLen=S.items.length;ui();saveDraft();
-  if(coach===1&&S.items.length&&!S.stroke){coach=2;slip([isTouch()?'Nice line. Tap RIDE to ride it.':'Nice line. Press RIDE or Enter to ride it.'],{hold:3000});}}
+  if(S.level.tools.includes('sling')&&S.items.some(i=>i.type==='sling')&&coachOnce('sling-aim'))slip(['Drag its arrow to aim.'],{hold:3200});
+  else if(coach===1&&S.items.length&&!S.stroke){coach=2;slip([isTouch()?'Nice line. Tap RIDE to ride it.':'Nice line. Press RIDE or Enter to ride it.'],{hold:3000});}}
 function flashInk(){const now=performance.now();if(now-(flashInk.t||0)>350){flashInk.t=now;A('inkEmpty');}const m=$('#meter');m.classList.remove('flash');void m.offsetWidth;m.classList.add('flash');}
 
 // ---------- proof slips (toasts): slide out of the top edge, typed, with a proofreader's mark ----------
@@ -315,7 +322,8 @@ function fail(status,quit=false){const tok=rideTok,w=world,r=w.rider;running=fal
   const why=quit?null:status==='popped'?['Popped!','pop']:status==='stuck'?['Stuck. The rider stopped rolling.','stuck']
     :[w.t-lastLineT<1.2?'Fell off the tightrope.':'Fell off the edge.','fall'];
   const back=()=>{if(tok!==rideTok)return;cancelRide();S.mode='edit';applyMode();refreshBg();paperFlash();
-    if(why)slip([why[0],RETRY()],{mark:why[1],hold:2600});maybeOfferAssist();};
+    const tip=why&&S.level.tools.includes('sling')&&S.items.some(i=>i.type==='sling')&&coachOnce('sling-fail')?'Put it in the rider’s path and point it at the ring.':null;
+    if(why)slip([why[0],tip||RETRY()],{mark:why[1],hold:tip?3600:2600});maybeOfferAssist();};
   if(quit)back();else setTimeout(back,110);}
 function toEdit(){if(S.mode==='ride'&&world)return fail(world.status==='run'?'quit':world.status,true);
   cancelRide();hideWin();S.mode='edit';applyMode();refreshBg();paperFlash();}
@@ -421,7 +429,7 @@ let jumpEdge=false;
 const CODES={left:['ArrowLeft','KeyA'],right:['ArrowRight','KeyD'],up:['ArrowUp','KeyW'],down:['ArrowDown','KeyS'],jump:['Space']};
 const held=k=>CODES[k].some(c=>pressed.has(c))||(touchHeld[k]&&touchHeld[k].size>0);
 function readInput(){return{steer:(held('right')?1:0)-(held('left')?1:0),jump:jumpEdge,jumpHeld:held('jump'),push:(held('up')?1:0)-(held('down')?1:0)};}
-const TOOLKEYS={Digit1:'line',Digit2:'wind',Digit3:'rope',Digit4:'well',Numpad1:'line',Numpad2:'wind',Numpad3:'rope',Numpad4:'well'};
+const TOOLKEYS={Digit1:'line',Digit2:'wind',Digit3:'rope',Digit4:'sling',Numpad1:'line',Numpad2:'wind',Numpad3:'rope',Numpad4:'sling'};   // the well is retired; 4 is the sling
 addEventListener('keydown',e=>{
   const t=e.target;
   if(t.closest&&t.closest('input,select,textarea')){if(e.key==='Escape')togglePanel(false);return;}
@@ -480,7 +488,7 @@ const designPt=e=>{const r=fg.getBoundingClientRect();return[(e.clientX-r.left)/
 stage.addEventListener('pointerdown',()=>{itemsAtDown=S.items.length;},true);
 fg.addEventListener('pointerdown',e=>{if(sideDraws||S.mode!=='edit'||busy)return;const tool=S.tool;
   if(S.stroke){drawing={tool,p:designPt(e),t:performance.now()};A('draw',tool,'start',0);}
-  else if(S.items.length>itemsAtDown){A('draw',tool,'start',0);A('draw',tool,'end',0);}});   // a well lands in one tap
+  else if(S.items.length>itemsAtDown){A('draw',tool,'start',0);A('draw',tool,'end',0);}});   // a sling (or a legacy well) lands in one tap
 addEventListener('pointermove',e=>{if(!drawing||sideDraws)return;if(!S.stroke){A('draw',drawing.tool,'end',0);drawing=null;return;}
   const p=designPt(e),now=performance.now(),dt=Math.max(1,now-drawing.t)/1000,sp=Math.hypot(p[0]-drawing.p[0],p[1]-drawing.p[1])/dt;
   drawing.p=p;drawing.t=now;A('draw',drawing.tool,'move',Math.min(sp,4000));});

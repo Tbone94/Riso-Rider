@@ -1,7 +1,7 @@
 // node tools/validate.mjs             check every level + difficulty report; exits non-zero on failure
 // node tools/validate.mjs --search N  random-search N placements per level (default 4000): how many
 //                                     win, and the cheapest wins (for setting par)
-// options:  --level <id>   only that level      --quick   skip the difficulty report     --maps  print well win maps
+// options:  --level <id>   only that level      --quick   skip the difficulty report     --maps  print sling/well win maps
 //           --density N    placements for solution density (default 600)
 //           --clumsy N     clumsy-rider runs per assist level (default 50)
 //
@@ -38,6 +38,8 @@ const nearAnchor=(L,r)=>{const a=anchorsOf(L)[Math.floor(r()*anchorsOf(L).length
 export function sample(L,r){const tools=L.tools,k=r()<.6?1:r()<.85?2:3,items=[];
   for(let i=0;i<k;i++){const t=tools[Math.floor(r()*tools.length)];
     if(t==='well'){let x,y;do{x=rint(r,20,780);y=rint(r,20,480);}while(Math.hypot(x-L.goal.x,y-L.goal.y)<P.WELL.keepOut);items.push({type:'well',x,y});continue;}
+    // Slings: half aimed roughly at the goal (±0.5 rad), like a player would, half anywhere.
+    if(t==='sling'){const x=rint(r,20,780),y=rint(r,20,480),a=r()<.5?Math.atan2(L.goal.y-y,L.goal.x-x)+(r()-.5):(r()*2-1)*Math.PI;items.push({type:'sling',x,y,a:Math.round(a*100)/100});continue;}
     if(t==='rope'){const x=rint(r,0,760),y=rint(r,40,480),l=rint(r,40,260),a=(r()-.5)*1.4;items.push({type:'rope',a:[x,y],b:[Math.round(x+Math.cos(a)*l),Math.round(y+Math.sin(a)*l)]});continue;}
     const n=rint(r,2,3),pts=[r()<.5?nearAnchor(L,r):[rint(r,0,760),rint(r,20,480)]];
     for(let j=1;j<n;j++){const p=pts[j-1];pts.push([Math.min(800,p[0]+rint(r,30,300)),Math.max(0,Math.min(490,p[1]+rint(r,t==='wind'?-260:-120,t==='wind'?120:220)))]);}
@@ -67,6 +69,7 @@ function checkLevel(L,{quick,densityN,clumsyN}){
     rows.push({i:i+1,cost:Math.round(cost),stars:P.stars(L,cost),auto:a.status,autoT:a.t,jumps:a.jumps,none:n.status,noneT:n.t});});
   const drop=dropBalance(L,problems,{clumsyN:quick?0:Math.min(30,clumsyN)});
   const well=L.tools.includes('well')?wellSmoothness(L,problems):null;
+  const sling=L.tools.includes('sling')?slingCheck(L,problems):null;
   // Par source: 3★ must come from the puzzle. Cheapest = cheapest rideable win among the listed solutions and a
   // random search (no-jump wins only when the level sets parFrom:'no-jump', i.e. before jumping is taught).
   {const noJump=L.parFrom==='no-jump',s=search(L,quick?0:densityN),pool=[...L.solutions.map(items=>({items,cost:P.inkUsed(items),jumps:P.simulate(L,items).jumps,won:P.simulate(L,items).status==='win'})).filter(w=>w.won),...s.wins];
@@ -83,7 +86,33 @@ function checkLevel(L,{quick,densityN,clumsyN}){
     const c0=clumsy(0),c1=clumsy(1),dens=Math.min(1,Math.max(0,Math.log10(100/Math.max(density*100,.1))/3)),tight=cheapest/L.ink;
     const puzzle=.7*dens+.3*tight,ride=1-c0;
     diff={density,cheapest,tight,c0,c1,puzzle,ride,score:5*(puzzle+ride)};}
-  return{id:L.id,empty:empty.status,rows,problems,diff,drop,well};}
+  return{id:L.id,empty:empty.status,rows,problems,diff,drop,well,sling};}
+
+// ---------- sling learnability (contract v4) ----------
+// The rule players should be able to learn: "put a sling in the rider's path, point it at the ring".
+// Learnability: place a sling at points every 15 units along the natural (no-item) fall path and aim each
+// straight at the goal; the share that win must be a clear majority (≥ SLING_LEARN) on levels where the
+// sling is the only tool (the intro). On mixed levels it's reported only, since other tools may be needed.
+// Smoothness: over a SLING_GRID grid, a placement wins if any of 9 aims (at the goal + 8 compass
+// directions) wins; FAIL below 60% of winning cells with ≥ 3 winning neighbours, or under 25 cells.
+const SLING_LEARN=.6,SLING_GRID=25;
+function slingFallPath(L){const w=P.build(L,[]),pts=[];let last=null;
+  while(w.status==='run'&&w.t<6){P.step(w,L,P.NO_INPUT);const r=w.rider;
+    if(!r.grounded&&r.y>L.start.y+10&&r.y<P.H-20&&(!last||Math.hypot(r.x-last[0],r.y-last[1])>=15)){last=[r.x,r.y];pts.push(last);}}
+  return pts;}
+function slingCheck(L,problems){const intro=L.tools.length===1,pts=slingFallPath(L);
+  const learnMap=pts.map(([x,y])=>P.simulate(L,[{type:'sling',x,y,a:Math.atan2(L.goal.y-y,L.goal.x-x)}],{policy:'auto',maxT:10}).status==='win');
+  const learn=pts.length?learnMap.filter(Boolean).length/pts.length:0;
+  if(intro&&learn<SLING_LEARN)problems.push(`${L.id}: sling: only ${Math.round(learn*100)}% of slings on the fall path aimed at the goal win (want ≥ ${SLING_LEARN*100}%)`);
+  const aims=(x,y)=>[Math.atan2(L.goal.y-y,L.goal.x-x),...[...Array(8)].map((_,i)=>-Math.PI+i*Math.PI/4)],map=[];
+  for(let y=SLING_GRID/2;y<P.H;y+=SLING_GRID){const row=[];for(let x=SLING_GRID/2;x<P.W;x+=SLING_GRID){
+    if(Math.hypot(x-L.goal.x,y-L.goal.y)<L.goal.r+P.SLING.rc){row.push(-1);continue;}
+    row.push(aims(x,y).some(a=>P.simulate(L,[{type:'sling',x,y,a}],{policy:'auto',maxT:10}).status==='win')?1:0);}map.push(row);}
+  let wins=0,inner=0;map.forEach((row,j)=>row.forEach((c,i)=>{if(c!==1)return;wins++;let n=0;for(const[a,b]of[[1,0],[-1,0],[0,1],[0,-1]])if(map[j+b]?.[i+a]===1)n++;if(n>=3)inner++;}));
+  const smooth=wins?inner/wins:0;
+  if(intro&&smooth<WELL_SMOOTH)problems.push(`${L.id}: sling: best-aim win map is speckled (${Math.round(smooth*100)}% of winning cells have ≥3 winning neighbours)`);
+  if(intro&&wins<WELL_MIN)problems.push(`${L.id}: sling: only ${wins} winning sling positions (want ≥ ${WELL_MIN})`);
+  return{intro,learn,learnStr:learnMap.map(b=>b?'#':'.').join(''),n:pts.length,wins,cells:map.flat().filter(c=>c>=0).length,smooth,map};}
 
 // ---------- gravity-well smoothness ----------
 // A well should be a predictable magnet: moving it a little changes the outcome a little. Take the first
@@ -165,6 +194,10 @@ else if(process.argv[1]&&new URL(import.meta.url).pathname===(await import('node
   levels.forEach((L,li)=>res[li].rows.forEach((r,i)=>console.log((i?pad('',39):pad(L.id,14)+pad(L.ink,6)+pad(L.par.join('/'),10)+pad(res[li].empty,9))
     +pad(r.i,5)+pad(r.cost,6)+pad(r.stars,3)+pad(r.auto+(r.auto==='win'?' '+r.autoT+'s':''),13)+pad(r.jumps,7)+r.none+(r.none==='win'?' '+r.noneT+'s':''))));
   const problems=res.flatMap(r=>r.problems),warnings=[];
+  const sl=levels.map((L,i)=>[L,res[i].sling]).filter(x=>x[1]);
+  if(sl.length){console.log(`\nSLINGS  (learn = slings on the no-item fall path aimed at the goal that win; map = one sling on a ${SLING_GRID}-unit grid, best of 9 aims)`);
+    for(const[L,g]of sl){console.log(`${pad(L.id,14)}learn ${pad(pct(g.learn),5)} ${pad(g.learnStr,22)} map wins ${g.wins}/${g.cells}  smooth ${pct(g.smooth)}${g.intro?'':'  (mixed tools: reported only)'}`);
+      if(opt('--maps',false))console.log(g.map.map(r=>'  '+r.map(c=>c<0?'g':c?'#':'.').join('')).join('\n'));}}
   const wl=levels.map((L,i)=>[L,res[i].well]).filter(x=>x[1]);
   if(wl.length){console.log(`\nWELLS  (one well swept over a ${WELL_GRID}-unit grid, rest of the drawing fixed; smooth = winning cells with ≥3 winning neighbours)`);
     for(const[L,w]of wl){console.log(`${pad(L.id,14)}with ${pad(w.other,8)} wins ${w.wins}/${w.cells} (${pct(w.wins/w.cells)})  smooth ${pct(w.smooth)}`);

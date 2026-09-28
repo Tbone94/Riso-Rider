@@ -11,9 +11,22 @@
 // band, a block a wide road band. The ghost trail shifts along the same direction by the rider's z,
 // so a rider who drifted off a tightrope visibly leaves its band before falling.
 import * as P from './physics.js';
-import {W,H,R,DT,COST,WIDTH,WIND,WELL,STATE,itemCost,inkUsed,polyLen,makeRope,closest} from './physics.js';
+import {W,H,R,DT,G,COST,WIDTH,WIND,WELL,STATE,itemCost as physItemCost,polyLen,makeRope,closest} from './physics.js';
 
 const TAU=Math.PI*2;
+// ---------- the sling (contract v4), feature-detected until physics lands it ----------
+const SLING_FALLBACK={rc:34,ro:27,minSpeed:320,maxSpeed:700,boost:1.1,cooldown:.5,keepOut:80};
+const SL=()=>({...SLING_FALLBACK,...(P.SLING||{})});
+const slingCost=()=>COST.sling!=null?COST.sling:120;
+// Costs that understand sling items even before physics.js knows them.
+function itemCost(it){return it.type==='sling'?slingCost():physItemCost(it);}
+const inkUsed=items=>items.reduce((s,it)=>s+itemCost(it),0);
+// The first stretch of the fling after release: physics' own slingPreview when present, else a matching estimate.
+function slingArc(sl,speed=450,t=.45){if(typeof P.slingPreview==='function'){try{const r=P.slingPreview(sl,speed,t,0);/* dir 0: the centre line; the real exit is ±ro either side, depending on which way the rider orbits */if(r&&r.length)return r;}catch(_){}}
+  const k=SL(),ux=Math.cos(sl.a),uy=Math.sin(sl.a),v=Math.min(k.maxSpeed,Math.max(speed,k.minSpeed)*k.boost);
+  // release where the orbit's tangent equals the aim (the side that turns clockwise on screen)
+  const x0=sl.x+uy*k.ro,y0=sl.y-ux*k.ro,out=[];
+  for(let i=0;i<=18;i++){const tt=t*i/18;out.push([x0+ux*v*tt,y0+uy*v*tt+.5*G*tt*tt]);}return out;}
 // Well pull at distance d. Uses physics' wellForce(d) when it exists (it replaces the old falloff), else the
 // v1 formula with the current constants. Read WELL.range live: physics may retune it.
 function wellForce(d){if(typeof P.wellForce==='function')return P.wellForce(d);
@@ -24,11 +37,15 @@ const Z_MAX=14;                                     // cap on how far ghost mark
 const SAMPLE=6, STREAM=.3, SNAP=12, CHAIKIN=2, MIN_GAP=3.5, MIN_LEN=10, MIN_ROPE=24;
 const REASON={fell:'FELL',popped:'POPPED',stuck:'STUCK',timeout:'STUCK'};
 const WIDTH_NAME={line:'TIGHTROPE',rope:'TRAMPOLINE',wind:'TAILWIND'};
-const GHOST_SPACING=[6,13,8,12];                    // arc-length between marks per state: ground, air, rope, wind
+const GHOST_SPACING=[6,13,8,12,5];   // ...and 4 = orbiting in a sling                    // arc-length between marks per state: ground, air, rope, wind
 const MONO='ui-monospace,Menlo,Consolas,monospace';
 // Touch drawing: the line goes exactly where the finger is (the player asked for this over an offset pen),
 // and a LOUPE_PX magnifier beside the finger shows what the fingertip is covering. OFF_PX>0 would restore an offset pen.
 const OFF_PX=0, LOUPE_PX=90, LOUPE_ZOOM=2;
+// Touch draws like a finger on paper: no loupe, no crosshair/tether, no trailing, no reshaping on lift. The aids
+// are kept in the code behind TOUCH_AIDS in case they come back. TOUCH_SAMPLE is the finer touch sampling step,
+// TOUCH_SNAP the tight start-snap radius (ledge corners only).
+const TOUCH_AIDS=false, TOUCH_SAMPLE=4, TOUCH_SNAP=8;
 // The two faces from UI.md: the stencil for labels and stamps, the typewriter for small typed notes.
 const STENCIL=`'Big Shoulders Stencil Display',${MONO}`, TYPE=`'Cutive Mono',${MONO}`;
 
@@ -88,7 +105,13 @@ export function createSide({canvas,getState,hooks={}}){
 
   // ---------- drag to adjust: wells by their centre, ropes by either anchor ----------
   // Returns {kind:'well',i} or {kind:'rope',i,end:'a'|'b'} for the handle under p, topmost (latest) first.
+  const aimTip=it=>{const k=SL(),r=k.rc+22;return[it.x+Math.cos(it.a)*r,it.y+Math.sin(it.a)*r];};
   function handleAt(S,p,rad){let best=null,bd=rad;
+    // a sling's aim handle wins over everything; its body is grabbable anywhere inside the ring
+    for(let i=S.items.length-1;i>=0;i--){const it=S.items[i];if(it.type!=='sling')continue;
+      const d=dist(p,aimTip(it));if(d<Math.max(rad,bd)*1.15){return{kind:'aim',i};}}
+    for(let i=S.items.length-1;i>=0;i--){const it=S.items[i];if(it.type!=='sling')continue;
+      if(Math.hypot(p[0]-it.x,p[1]-it.y)<SL().rc+2)return{kind:'sling',i};}
     for(let i=S.items.length-1;i>=0;i--){const it=S.items[i];
       if(it.type==='well'){const d=Math.hypot(p[0]-it.x,p[1]-it.y);if(d<bd){bd=d;best={kind:'well',i};}}
       else if(it.type==='rope')for(const end of['a','b']){const d=dist(p,it[end]);if(d<bd){bd=d;best={kind:'rope',i,end};}}}
@@ -97,12 +120,14 @@ export function createSide({canvas,getState,hooks={}}){
   function setCursor(c){if(ed.cursor===c)return;ed.cursor=c;canvas.style.cursor=c;}
   function startDrag(S,h,e,touch,p){const it=S.items[h.i];
     ed.drag={...h,before:JSON.parse(JSON.stringify(S.items)),orig:JSON.parse(JSON.stringify(it)),moved:false,
-      grab:h.kind==='well'?[it.x-p[0],it.y-p[1]]:[it[h.end][0]-p[0],it[h.end][1]-p[1]]};   // relative: nothing jumps on pickup
+      grab:h.kind==='well'||h.kind==='sling'?[it.x-p[0],it.y-p[1]]:h.kind==='aim'?[0,0]:[it[h.end][0]-p[0],it[h.end][1]-p[1]]};   // relative: nothing jumps on pickup
     S.items[h.i]=JSON.parse(JSON.stringify(it));   // a fresh object: the snapshot never shares state with the live item
     try{canvas.setPointerCapture(e.pointerId);}catch(_){}
     ed.id=e.pointerId;if(!touch)setCursor('grabbing');}
-  function dragTo(S,p){const d=ed.drag,it=S.items[d.i];if(!it)return;const q=[p[0]+d.grab[0],p[1]+d.grab[1]];d.moved=true;
-    if(d.kind==='well'){it.x=r1(clamp(q[0],0,W));it.y=r1(clamp(q[1],0,H));return;}
+  function dragTo(S,p,fine){const d=ed.drag,it=S.items[d.i];if(!it)return;const q=[p[0]+d.grab[0],p[1]+d.grab[1]];d.moved=true;
+    if(d.kind==='aim'){let a=Math.atan2(q[1]-it.y,q[0]-it.x);if(!fine){const st=Math.PI/36;a=Math.round(a/st)*st;}   // 5° steps; Shift = free
+      it.a=Math.round(a*1e4)/1e4;return;}
+    if(d.kind==='well'||d.kind==='sling'){it.x=r1(clamp(q[0],0,W));it.y=r1(clamp(q[1],0,H));return;}
     const fixed=it[d.end==='a'?'b':'a'];let b=snapAt(S,q,fixed)||q;
     // ink budget: everything else stays, this rope may use what's left (length × COST.rope)
     const others=inkUsed(S.items)-itemCost(it),max=Math.max(MIN_ROPE,(S.level.ink-others)/COST.rope-.15),len=dist(fixed,b);
@@ -110,10 +135,10 @@ export function createSide({canvas,getState,hooks={}}){
     else if(len<MIN_ROPE&&len>1e-3){const f=MIN_ROPE/len;b=[fixed[0]+(b[0]-fixed[0])*f,fixed[1]+(b[1]-fixed[1])*f];}
     it[d.end]=[r1(b[0]),r1(b[1])];}
   function endDrag(S,commit){const d=ed.drag;ed.drag=null;if(!d)return;const it=S.items[d.i];
-    if(commit&&it&&d.kind==='well'){const G0=S.level.goal;
-      if(Math.hypot(it.x-G0.x,it.y-G0.y)<WELL.keepOut){S.items[d.i]=d.orig;call('toast','Too close to the ring');call('onChange');return;}}
+    if(commit&&it&&(d.kind==='well'||d.kind==='sling')){const G0=S.level.goal,ko=d.kind==='sling'?SL().keepOut:WELL.keepOut;
+      if(Math.hypot(it.x-G0.x,it.y-G0.y)<ko){S.items[d.i]=d.orig;call('toast','Too close to the ring');call('onChange');return;}}
     if(!commit){S.items[d.i]=d.orig;call('onChange');return;}
-    if(d.moved&&JSON.stringify(it)!==JSON.stringify(d.orig)){call('moved',d.before);phase(d.kind,'start',null);phase(d.kind,'end',null);}
+    if(d.moved&&JSON.stringify(it)!==JSON.stringify(d.orig)){call('moved',d.before);const tool=d.kind==='aim'?'sling':d.kind;phase(tool,'start',null);phase(tool,'end',null);}
     call('onChange');}
 
   // Block corners on a ridable top edge snap LINE_TH below the corner, so a drawn line's top sits flush with the
@@ -125,6 +150,10 @@ export function createSide({canvas,getState,hooks={}}){
     S.items.forEach(it=>{if(it.type==='line'||it.type==='wind'){if(it.pts.length){out.push(it.pts[0]);out.push(it.pts[it.pts.length-1]);}}
       else if(it.type==='rope'){out.push(it.a);out.push(it.b);}});
     return out;}
+  function ledgeSnap(S,p){let best=null,bd=TOUCH_SNAP;
+    for(const k of['blocks','ice','crumble'])(S.level[k]||[]).forEach(poly=>{const tops=new Set();topEdges(poly).forEach(([a,b])=>{tops.add(a);tops.add(b);});
+      poly.forEach(q=>{const t=tops.has(q)?[q[0],q[1]+LINE_TH]:q,d=dist(t,p);if(d<bd){bd=d;best=t;}});});
+    return best;}
   function snapAt(S,p,except){let best=null,bd=SNAP;for(const q of snapTargets(S)){if(except&&dist(q,except)<1)continue;const d=dist(q,p);if(d<bd){bd=d;best=q;}}return best;}
   const snap=(S,p,except)=>{const q=snapAt(S,p,except);return q?[q[0],q[1]]:[r1(p[0]),r1(p[1])];};
 
@@ -141,14 +170,30 @@ export function createSide({canvas,getState,hooks={}}){
     // pressing a well's centre or a rope anchor picks it up (a finger can press it directly or aim with the pen)
     ed.u=unitsPerPx();const h=handleAt(S,touch?ed.finger:p,grabRad(touch))||(touch?handleAt(S,p,grabRad(false)):null);
     if(h){startDrag(S,h,e,touch,p);call('onChange');return;}
-    if(S.tool==='well'&&!touch){placeWell(S,p);return;}
+    if(S.tool==='well')return;                     // legacy: wells can still be moved, but no longer placed
+    if(S.tool==='sling'&&!touch){placeSling(S,p);return;}
     try{canvas.setPointerCapture(e.pointerId);}catch(_){}
     ed.id=e.pointerId;ed.full=false;ed.raw=p;
-    if(S.tool==='well'){ed.aim=true;return;}   // touch: aim with the offset pen, place on lift
-    const a=snap(S,p);ed.sm=a.slice();
+    if(S.tool==='sling'){ed.aim=true;return;}   // touch: preview under the finger, place on lift
+    let a;if(touch){const q=ledgeSnap(S,p);a=q?[q[0],q[1]]:[r1(p[0]),r1(p[1])];ed.snapped=!!q;}else{a=snap(S,p);ed.snapped=false;}
+    ed.sm=a.slice();
     if(S.tool==='rope')S.stroke={type:'rope',a,b:a.slice()};
     else{if(room()<=0){flash(true);ed.full=true;}S.stroke={type:S.tool==='wind'?'wind':'line',pts:[a]};}
     phase(S.stroke.type,'start',a);call('onChange');}
+  function slingKeep(S,p){const G0=S.level.goal;return Math.hypot(p[0]-G0.x,p[1]-G0.y)<SL().keepOut;}
+  // Default aim for a new sling: the aim whose fling actually passes through the goal ring (physics' slingAim
+  // accounts for gravity), so a sling dropped anywhere on the rider's path works as placed. Cached on a 4-unit grid,
+  // since the hover preview asks every frame. Falls back to pointing straight at the ring.
+  const aimCache=new Map();
+  const aimAtGoal=(S,p)=>{const G0=S.level.goal,straight=Math.atan2(G0.y-p[1],G0.x-p[0]);
+    if(typeof P.slingAim!=='function')return Math.round(straight*1e4)/1e4;
+    const k=S.level.id+':'+Math.round(p[0]/4)+':'+Math.round(p[1]/4);let a=aimCache.get(k);
+    if(a===undefined){try{a=P.slingAim({x:p[0],y:p[1]},G0.x,G0.y);}catch(_){a=straight;}if(aimCache.size>4000)aimCache.clear();aimCache.set(k,a);}
+    return Math.round(a*1e4)/1e4;};
+  function placeSling(S,p){
+    if(slingKeep(S,p)){call('toast','Too close to the ring');return;}
+    if(slingCost()>room()+1e-6){flash(true);return;}
+    S.items.push({type:'sling',x:r1(p[0]),y:r1(p[1]),a:aimAtGoal(S,p)});phase('sling','start',p);phase('sling','end',p);call('onChange');}
   function placeWell(S,p){const G0=S.level.goal;
     if(Math.hypot(p[0]-G0.x,p[1]-G0.y)<WELL.keepOut){call('toast','Too close to the ring');return;}
     if(COST.well>room()+1e-6){flash(true);return;}
@@ -159,7 +204,7 @@ export function createSide({canvas,getState,hooks={}}){
     const mine=e.pointerId===ed.id,touch=e.pointerType==='touch';
     if(touch&&!mine)return;                       // a second finger doesn't move the pen
     ed.hover=penOf(e,touch);if(touch)ed.finger=pos(e);
-    if(mine&&ed.drag){if(!editing()){cancel();return;}dragTo(S,touch?ed.hover:pos(e));call('onChange');return;}
+    if(mine&&ed.drag){if(!editing()){cancel();return;}dragTo(S,touch?ed.hover:pos(e),e.shiftKey);call('onChange');return;}
     if(!touch&&ed.id===null)setCursor(editing()&&handleAt(S,ed.hover,grabRad(false))?'grab':'');
     if(!mine||(!S.stroke&&!ed.aim))return;
     if(!editing()){cancel();return;}
@@ -167,13 +212,15 @@ export function createSide({canvas,getState,hooks={}}){
     const sk=S.stroke,evs=(e.getCoalescedEvents&&e.getCoalescedEvents())||[];if(!evs.length)evs.push(e);
     let changed=false;
     for(const ev of evs){const p=penOf(ev,touch);ed.raw=p;
-      if(sk.type==='rope'){let b=snapAt(S,p,sk.a)||p;const len=dist(sk.a,b),max=Math.max(0,room()/COST.rope-.15);   // margin so rounding never tips it over
+      if(sk.type==='rope'){let b=(touch?null:snapAt(S,p,sk.a))||p;const len=dist(sk.a,b),max=Math.max(0,room()/COST.rope-.15);   // margin so rounding never tips it over
         if(len>max){const f=max/len;b=[sk.a[0]+(b[0]-sk.a[0])*f,sk.a[1]+(b[1]-sk.a[1])*f];flash();}
         sk.b=[r1(b[0]),r1(b[1])];changed=true;continue;}
       // light streamline: the pen trails the pointer a little, which irons out hand jitter
-      ed.sm[0]+=(p[0]-ed.sm[0])*(1-STREAM);ed.sm[1]+=(p[1]-ed.sm[1])*(1-STREAM);
-      if(ed.full){if(dist(sk.pts[sk.pts.length-1],p)>SAMPLE*3)flash();continue;}
-      if(dist(sk.pts[sk.pts.length-1],ed.sm)>=SAMPLE){extend(sk,ed.sm);changed=true;}}
+      // (touch: none, the stroke's head stays exactly under the finger)
+      const stream=touch?0:STREAM,sample=touch?TOUCH_SAMPLE:SAMPLE;
+      ed.sm[0]+=(p[0]-ed.sm[0])*(1-stream);ed.sm[1]+=(p[1]-ed.sm[1])*(1-stream);
+      if(ed.full){if(dist(sk.pts[sk.pts.length-1],p)>sample*3)flash();continue;}
+      if(dist(sk.pts[sk.pts.length-1],ed.sm)>=sample){extend(sk,ed.sm);changed=true;}else if(touch)changed=true;}
     if(changed){phase(sk.type,'move',ed.raw);call('onChange');}}
 
   function finish(e){
@@ -182,7 +229,7 @@ export function createSide({canvas,getState,hooks={}}){
     const S=S_(),sk=S&&S.stroke,wasTouch=ed.touch;
     if(wasTouch){ed.finger=null;}
     if(ed.drag){if(wasTouch)ed.hover=null;else setCursor(handleAt(S,pos(e),grabRad(false))?'grab':'');endDrag(S,editing());return;}
-    if(ed.aim){ed.aim=false;const p=ed.hover;if(wasTouch)ed.hover=null;if(p&&editing())placeWell(S,p);return;}
+    if(ed.aim){ed.aim=false;const p=ed.hover;if(wasTouch)ed.hover=null;if(p&&editing())placeSling(S,p);return;}
     if(wasTouch)ed.hover=null;
     if(!sk)return;S.stroke=null;phase(sk.type,'end',null);
     if(!editing()){call('onChange');return;}
@@ -191,8 +238,9 @@ export function createSide({canvas,getState,hooks={}}){
     else{let pts=sk.pts.slice();
       // land the pen where the pointer is, and snap the end to a nearby end/corner
       if(!ed.full&&ed.raw&&dist(pts[pts.length-1],ed.raw)>1)pts.push([r1(ed.raw[0]),r1(ed.raw[1])]);
-      if(pts.length>1){const q=snapAt(S,pts[pts.length-1],pts[0]);if(q)pts[pts.length-1]=[q[0],q[1]];}
-      pts=decimate(chaikin(pts,CHAIKIN),MIN_GAP).map(q=>[r1(q[0]),r1(q[1])]);
+      if(wasTouch){pts=decimate(pts,.6).map(q=>[r1(q[0]),r1(q[1])]);}   // touch: what you drew is what you get (just drop near-duplicates)
+      else{if(pts.length>1){const q=snapAt(S,pts[pts.length-1],pts[0]);if(q)pts[pts.length-1]=[q[0],q[1]];}
+        pts=decimate(chaikin(pts,CHAIKIN),MIN_GAP).map(q=>[r1(q[0]),r1(q[1])]);}
       pts=trim(pts,COST[sk.type],room());      // keep the cost honest after smoothing/snapping
       if(pts.length>1&&polyLen(pts)>=MIN_LEN)item={type:sk.type,pts};}
     if(item)S.items.push(item);
@@ -234,7 +282,7 @@ export function createSide({canvas,getState,hooks={}}){
     g.strokeStyle=ink.mid;g.lineWidth=2.5;g.setLineDash([5,6]);g.lineDashOffset=-tq*14;g.beginPath();g.arc(G0.x,G0.y,G0.r*1.65*pulse,0,TAU);g.stroke();g.setLineDash([]);
     g.strokeStyle=ink.key;g.lineWidth=3.5;g.beginPath();g.arc(G0.x,G0.y,G0.r,0,TAU);g.stroke();
     g.fillStyle=ink.key;g.beginPath();g.arc(G0.x,G0.y,4,0,TAU);g.fill();
-    if(edit&&S.tool==='well'){g.strokeStyle=ink.key;g.globalAlpha=.45;g.lineWidth=1;g.setLineDash([2,4]);g.beginPath();g.arc(G0.x,G0.y,WELL.keepOut,0,TAU);g.stroke();g.setLineDash([]);g.globalAlpha=1;}
+    if(edit&&(S.tool==='well'||S.tool==='sling')){g.strokeStyle=ink.key;g.globalAlpha=.45;g.lineWidth=1;g.setLineDash([2,4]);g.beginPath();g.arc(G0.x,G0.y,WELL.keepOut,0,TAU);g.stroke();g.setLineDash([]);g.globalAlpha=1;}
 
     // wells: ringed
     S.items.forEach((it,i)=>{if(it.type!=='well')return;const live=ed.drag&&ed.drag.kind==='well'&&ed.drag.i===i;
@@ -258,6 +306,9 @@ export function createSide({canvas,getState,hooks={}}){
     // lines: tightropes (bold line + far hairline), ropes: trampolines (dashed + dashed far edge)
     S.items.forEach(it=>{if(it.type==='line'&&it.pts.length>1)drawLine(g,S,it.pts,1);});
     S.items.forEach(it=>{if(it.type==='rope')drawRope(g,S,it.a,it.b,1);});
+    // slings: open ring + aim arrow; the one being edited gets the full preview arc
+    S.items.forEach((it,i)=>{if(it.type!=='sling')return;const live=edit&&ed.drag&&(ed.drag.kind==='sling'||ed.drag.kind==='aim')&&ed.drag.i===i;
+      drawSling(g,S,it,live?'active':'placed');});
     drawDrops(g,S);
 
     // start flag + rider at the start
@@ -272,6 +323,32 @@ export function createSide({canvas,getState,hooks={}}){
     if(edit)drawPreviews(g,S,tq);
     if(S.stroke)drawStroke(g,S,tq,lens);
     g.restore();}
+
+  // ---------- sling ----------
+  // An open ring (key over a misregistered mid ring) with a centre dot, a faint dashed orbit, and a bold aim arrow
+  // from the centre out past the rim ending in a round grab handle. Unlike the goal it has no fill and no target
+  // rings: it reads as "a ring with an arrow". mode 'placed' | 'active' (being placed or edited) | 'ghost' (cursor).
+  function drawSling(g,S,it,mode){const ink=S.ink,k=SL(),rc=k.rc,x=it.x,y=it.y,ux=Math.cos(it.a),uy=Math.sin(it.a),gr=grow();
+    const active=mode!=='placed',alpha=mode==='ghost'?.75:1;g.save();g.globalAlpha=alpha;g.lineCap='round';
+    slingPreviewArc(g,S,it,active);
+    g.strokeStyle=ink.mid;g.lineWidth=3.2;g.beginPath();g.arc(x+1.5,y+1.2,rc,0,TAU);g.stroke();
+    g.strokeStyle=ink.key;g.lineWidth=2.4;g.beginPath();g.arc(x,y,rc,0,TAU);g.stroke();
+    g.lineWidth=.9;g.globalAlpha=alpha*.55;g.setLineDash([2,3]);g.beginPath();g.arc(x,y,k.ro,0,TAU);g.stroke();g.setLineDash([]);g.globalAlpha=alpha;
+    g.fillStyle=ink.key;g.beginPath();g.arc(x,y,2.6,0,TAU);g.fill();
+    // aim arrow + handle
+    const tip=rc+22,head=rc+13,hr=5.5*gr;
+    g.strokeStyle=ink.mid;g.lineWidth=4.2;g.beginPath();g.moveTo(x+ux*5+1.2,y+uy*5+1);g.lineTo(x+ux*head+1.2,y+uy*head+1);g.stroke();
+    g.strokeStyle=ink.key;g.lineWidth=3.2;g.beginPath();g.moveTo(x+ux*5,y+uy*5);g.lineTo(x+ux*head,y+uy*head);g.stroke();
+    g.fillStyle=ink.key;g.beginPath();g.moveTo(x+ux*(head+7),y+uy*(head+7));g.lineTo(x+ux*(head-3)-uy*6,y+uy*(head-3)+ux*6);g.lineTo(x+ux*(head-3)+uy*6,y+uy*(head-3)-ux*6);g.closePath();g.fill();
+    g.save();g.globalCompositeOperation='destination-out';g.beginPath();g.arc(x+ux*tip,y+uy*tip,hr+1.5,0,TAU);g.fill();g.restore();
+    g.fillStyle=ink.light;g.beginPath();g.arc(x+ux*tip,y+uy*tip,hr,0,TAU);g.fill();
+    g.strokeStyle=ink.key;g.lineWidth=1.8;g.beginPath();g.arc(x+ux*tip,y+uy*tip,hr,0,TAU);g.stroke();
+    g.restore();}
+  // Dotted arc of the first ~0.45 s of the fling (physics' slingPreview), with a small arrowhead at its end.
+  function slingPreviewArc(g,S,it,active){const ink=S.ink,pts=slingArc(it,450,.45);if(!pts||pts.length<2)return;
+    g.save();g.fillStyle=ink.key;g.globalAlpha*=active?.9:.35;const step=active?1:2;
+    for(let i=0;i<pts.length-1;i+=step){const q=pts[i];g.beginPath();g.arc(q[0],q[1],active?1.7:1.3,0,TAU);g.fill();}
+    const e=pts[pts.length-1],q=pts[Math.max(0,pts.length-3)];arrowHead(g,e[0],e[1],Math.atan2(e[1]-q[1],e[0]-q[0]),active?6:4.5);g.restore();}
 
   // The pull field: a faint reach ring at WELL.range and sparse inward arrows whose length and ink follow
   // wellForce(d). clear=true for the well being placed or dragged; placed wells get a quieter version.
@@ -420,9 +497,9 @@ export function createSide({canvas,getState,hooks={}}){
   function drawGhostTrail(g,S,t,rm){const gh=S.ghost;if(!gh||!gh.path||gh.path.length<2)return;
     const P=gh.path,n=Math.max(2,Math.ceil(P.length*ghostReveal(S,t,rm))),col=S.ink.mid;
     g.fillStyle=col;g.strokeStyle=col;
-    let acc=1e9,prevState=-1;
+    let acc=1e9,prevState=-1;const orbit=orbitSpans(gh);
     for(let i=1;i<n;i++){const a=P[i-1],b=P[i],dx=b[0]-a[0],dy=b[1]-a[1],l=Math.hypot(dx,dy);if(l<1e-3)continue;
-      const st=b[3]|0;if(st!==prevState){acc=1e9;prevState=st;}   // start each stretch with a mark
+      const st=orbit(i)?4:b[3]|0;if(st!==prevState){acc=1e9;prevState=st;}   // start each stretch with a mark
       acc+=l;if(acc<(GHOST_SPACING[st]||6))continue;acc=0;
       const z=b[2]||0,az=Math.abs(z),fade=clamp(1-(az-4)/40,.5,1),s=.55+.45*fade,sh=zShift(z);
       const x=b[0]+DEPTH[0]*sh,y=b[1]+DEPTH[1]*sh,ux=dx/l,uy=dy/l;
@@ -430,15 +507,24 @@ export function createSide({canvas,getState,hooks={}}){
       if(st===STATE.ground){g.beginPath();g.arc(x,y,2.1*s,0,TAU);g.fill();}
       else if(st===STATE.air){g.lineWidth=1.8*s;g.beginPath();g.moveTo(x-ux*3.2,y-uy*3.2);g.lineTo(x+ux*3.2,y+uy*3.2);g.stroke();}
       else if(st===STATE.rope){g.lineWidth=1.1;g.beginPath();g.arc(x,y,2.5*s,0,TAU);g.stroke();}
+      else if(st===4){g.lineWidth=1.3;g.beginPath();g.moveTo(x-uy*3,y+ux*3);g.lineTo(x+uy*3,y-ux*3);g.stroke();}   // sling orbit: ticks across the path, like a coil
       else{const k=3.2*s;g.beginPath();g.moveTo(x+ux*k,y+uy*k);g.lineTo(x-ux*k-uy*k*.8,y-uy*k+ux*k*.8);g.lineTo(x-ux*k*.4,y-uy*k*.4);g.lineTo(x-ux*k+uy*k*.8,y-uy*k-ux*k*.8);g.closePath();g.fill();}}  // wind: little darts, carried along
     g.globalAlpha=1;}
 
+  // Path indices spent orbiting a sling: from each 'sling' capture to its 'slingOut' (or a path state of 4 if physics records one).
+  function orbitSpans(gh){const ev=gh.events||[],spans=[];let open=null;
+    for(const e of ev){if(e.type==='sling')open=e.t;else if(e.type==='slingOut'&&open!=null){spans.push([idxAt(gh,open),idxAt(gh,e.t)]);open=null;}}
+    if(open!=null)spans.push([idxAt(gh,open),gh.path.length]);
+    return i=>(gh.path[i]&&gh.path[i][3]===4)||spans.some(([a,b])=>i>=a&&i<=b);}
+  const idxAt=(gh,t)=>clamp(Math.round((t||0)/(2*DT))-1,0,gh.path.length-1);
   function drawGhostMarks(g,S,t,rm){const gh=S.ghost;if(!gh)return;const ink=S.ink,rev=ghostReveal(S,t,rm);
     const evs=gh.events||[],tMax=evs.length?Math.max(...evs.map(e=>e.t||0)):0;
     g.strokeStyle=ink.key;g.lineWidth=1.5;g.globalAlpha=.8;
     for(const e of evs){if(tMax&&(e.t||0)>tMax*rev+1e-6)continue;
       if(e.type==='jump'){const y=e.y-R-5;g.beginPath();g.moveTo(e.x-4,y+3);g.lineTo(e.x,y-1);g.lineTo(e.x+4,y+3);g.moveTo(e.x-4,y+7);g.lineTo(e.x,y+3);g.lineTo(e.x+4,y+7);g.stroke();}
       else if(e.type==='land'){g.beginPath();g.moveTo(e.x,e.y+R-3);g.lineTo(e.x,e.y+R+6);g.moveTo(e.x-3.5,e.y+R+6);g.lineTo(e.x+3.5,e.y+R+6);g.stroke();}
+      else if(e.type==='slingOut'){const q=pathAt(gh,e);if(q){const P=gh.path,j=idxAt(gh,e.t),n1=P[Math.min(P.length-1,j+2)],a=n1&&(n1[0]!==q[0]||n1[1]!==q[1])?Math.atan2(n1[1]-q[1],n1[0]-q[0]):q[4];
+        g.fillStyle=ink.key;g.beginPath();g.moveTo(q[0],q[1]);g.lineTo(q[0]+Math.cos(a)*9,q[1]+Math.sin(a)*9);g.stroke();arrowHead(g,q[0]+Math.cos(a)*10,q[1]+Math.sin(a)*10,a,4.5);}}
       else if(e.type==='boost'){const q=pathAt(gh,e);if(q){const a=q[4];g.fillStyle=ink.key;for(const o of[0,5]){const cx=q[0]+Math.cos(a)*o,cy=q[1]+Math.sin(a)*o;g.beginPath();g.moveTo(cx+Math.cos(a)*3,cy+Math.sin(a)*3);g.lineTo(cx+Math.cos(a+2.4)*3.5,cy+Math.sin(a+2.4)*3.5);g.lineTo(cx+Math.cos(a-2.4)*3.5,cy+Math.sin(a-2.4)*3.5);g.fill();}}}
       else if(e.type==='crumble'){const p=(S.level.crumble||[])[e.i];if(p){  // chips falling off the piece that gave way
         const bx=polyBox(p),x=(bx.x0+bx.x1)/2,y=bottomAt(p,x)+4;g.fillStyle=ink.key;
@@ -471,19 +557,22 @@ export function createSide({canvas,getState,hooks={}}){
 
   // ---------- local previews (never the whole solution) ----------
   function drawPreviews(g,S,tq){const ink=S.ink,h=ed.hover;
+    if(ed.drag&&(ed.drag.kind==='sling'||ed.drag.kind==='aim')){const it=S.items[ed.drag.i];if(it){handleRing(g,S,ed.drag.kind==='aim'?aimTip(it):[it.x,it.y],true);
+        if(ed.drag.kind==='aim')aimDial(g,S,it);
+        else{const G0=S.level.goal,ko=SL().keepOut;g.strokeStyle=ink.key;g.globalAlpha=.5;g.lineWidth=1;g.setLineDash([2,4]);g.beginPath();g.arc(G0.x,G0.y,ko,0,TAU);g.stroke();g.setLineDash([]);g.globalAlpha=1;
+          if(Math.hypot(it.x-G0.x,it.y-G0.y)<ko)badX(g,S,it.x,it.y);}}return;}
     if(ed.drag){const it=S.items[ed.drag.i];if(it){const q=ed.drag.kind==='well'?[it.x,it.y]:it[ed.drag.end];handleRing(g,S,q,true);
         if(ed.drag.kind==='well'){const G0=S.level.goal;g.strokeStyle=ink.key;g.globalAlpha=.5;g.lineWidth=1;g.setLineDash([2,4]);g.beginPath();g.arc(G0.x,G0.y,WELL.keepOut,0,TAU);g.stroke();g.setLineDash([]);g.globalAlpha=1;
           if(Math.hypot(it.x-G0.x,it.y-G0.y)<WELL.keepOut)badX(g,S,it.x,it.y);}
         else bounceArc(g,S,it.a,it.b);}return;}
     const grab=!S.stroke&&h&&!ed.aim?handleAt(S,h,grabRad(ed.touch)):null;
-    if(grab){const it=S.items[grab.i];handleRing(g,S,grab.kind==='well'?[it.x,it.y]:it[grab.end],false);}
+    if(grab){const it=S.items[grab.i];handleRing(g,S,grab.kind==='aim'?aimTip(it):grab.kind==='well'||grab.kind==='sling'?[it.x,it.y]:it[grab.end],false);
+      if(grab.kind==='sling')slingPreviewArc(g,S,it,true);}
     if(!S.stroke&&h&&!grab){
       if(S.tool==='line'||S.tool==='wind'||S.tool==='rope'){const q=snapAt(S,h);if(q){g.strokeStyle=ink.key;g.lineWidth=1.2;g.globalAlpha=.8;g.beginPath();g.arc(q[0],q[1],5.5,0,TAU);g.stroke();g.globalAlpha=1;}}
-      if(S.tool==='well'){const G0=S.level.goal,bad=Math.hypot(h[0]-G0.x,h[1]-G0.y)<WELL.keepOut||COST.well>room()+1e-6;
-        if(!bad)drawWellField(g,S,h[0],h[1],true);
-        g.strokeStyle=ink.key;g.globalAlpha=.55;g.lineWidth=1.2;g.setLineDash([3,4]);g.beginPath();g.arc(h[0],h[1],18,0,TAU);g.stroke();g.setLineDash([]);
-        if(bad){g.beginPath();g.moveTo(h[0]-6,h[1]-6);g.lineTo(h[0]+6,h[1]+6);g.moveTo(h[0]+6,h[1]-6);g.lineTo(h[0]-6,h[1]+6);g.stroke();}
-        else{g.fillStyle=ink.key;g.beginPath();g.arc(h[0],h[1],3,0,TAU);g.fill();}g.globalAlpha=1;}
+      if(S.tool==='sling'){const bad=slingKeep(S,h)||slingCost()>room()+1e-6;   // the sling you'd place here, aimed at the ring
+        if(bad){g.save();g.strokeStyle=ink.key;g.globalAlpha=.55;g.lineWidth=1.2;g.setLineDash([3,4]);g.beginPath();g.arc(h[0],h[1],SL().rc,0,TAU);g.stroke();g.setLineDash([]);g.restore();badX(g,S,h[0],h[1]);}
+        else drawSling(g,S,{x:h[0],y:h[1],a:aimAtGoal(S,h)},'ghost');}
       for(const bo of S.level.boosts||[]){const[cx,cy]=closest(h[0],h[1],bo.a[0],bo.a[1],bo.b[0],bo.b[1]);if(Math.hypot(h[0]-cx,h[1]-cy)<18)boostArrow(g,S,bo);}
       // hovering an existing rope or wind lane
       for(const it of S.items){
@@ -495,6 +584,9 @@ export function createSide({canvas,getState,hooks={}}){
   function handleRing(g,S,q,held){const ink=S.ink,u=Math.max(1,ed.u>1.25?ed.u*.7:1);g.save();g.strokeStyle=ink.key;g.lineWidth=1.4*u;g.globalAlpha=.9;
     if(!held)g.setLineDash([3*u,2.5*u]);g.beginPath();g.arc(q[0],q[1],10*u,0,TAU);g.stroke();g.setLineDash([]);
     g.lineWidth=.9*u;g.globalAlpha=.6;g.beginPath();g.arc(q[0],q[1],14*u,0,TAU);g.stroke();g.restore();}
+  // While aiming: a faint dial of 5° ticks around the ring (15° longer), so the snapping is visible.
+  function aimDial(g,S,it){const ink=S.ink,k=SL(),r0=k.rc+30;g.save();g.strokeStyle=ink.key;g.globalAlpha=.4;g.lineWidth=.9;g.beginPath();
+    for(let d=0;d<72;d++){const a=d*Math.PI/36,l=d%3?3:6;g.moveTo(it.x+Math.cos(a)*r0,it.y+Math.sin(a)*r0);g.lineTo(it.x+Math.cos(a)*(r0+l),it.y+Math.sin(a)*(r0+l));}g.stroke();g.restore();}
   function badX(g,S,x,y){g.save();g.strokeStyle=S.ink.key;g.lineWidth=1.6;g.beginPath();g.moveTo(x-7,y-7);g.lineTo(x+7,y+7);g.moveTo(x+7,y-7);g.lineTo(x-7,y+7);g.stroke();g.restore();}
   // Short arc showing which way a rope throws you: the incoming fall reflected off the rope, bent by gravity.
   function bounceArc(g,S,A,B){const rp=makeRope(A,B);if(rp.len<MIN_ROPE)return;
@@ -511,13 +603,15 @@ export function createSide({canvas,getState,hooks={}}){
 
   // ---------- the stroke under the pen ----------
   function drawStroke(g,S,tq,lens){const sk=S.stroke,ink=S.ink;let pen;
-    if(sk.type==='rope'){drawRope(g,S,sk.a,sk.b,.8);bounceArc(g,S,sk.a,sk.b);pen=sk.b;
-      const q=snapAt(S,sk.b,sk.a);if(q){g.strokeStyle=ink.key;g.lineWidth=1.2;g.beginPath();g.arc(q[0],q[1],6,0,TAU);g.stroke();}}
+    const fin=ed.touch?1:.8;   // touch: the stroke is drawn at its final look straight away
+    if(sk.type==='rope'){drawRope(g,S,sk.a,sk.b,fin);bounceArc(g,S,sk.a,sk.b);pen=sk.b;
+      const q=ed.touch?null:snapAt(S,sk.b,sk.a);if(q){g.strokeStyle=ink.key;g.lineWidth=1.2;g.beginPath();g.arc(q[0],q[1],6,0,TAU);g.stroke();}}
     else{const pts=sk.pts.slice();if(!ed.full&&ed.sm&&dist(pts[pts.length-1],ed.sm)>.5)pts.push(ed.sm);
-      if(pts.length>1){if(sk.type==='line')drawLine(g,S,pts,.8);else{drawWind(g,S,pts,tq,.8);windArrows(g,S,pts,tq);}}
+      if(pts.length>1){if(sk.type==='line')drawLine(g,S,pts,fin);else{drawWind(g,S,pts,tq,fin);windArrows(g,S,pts,tq);}}
       else{g.fillStyle=ink.key;g.beginPath();g.arc(pts[0][0],pts[0][1],2.5,0,TAU);g.fill();}
       pen=pts[pts.length-1];
-      if(sk.type==='line'&&ed.raw){const q=snapAt(S,ed.raw,sk.pts[0]);if(q){g.strokeStyle=ink.key;g.lineWidth=1.2;g.beginPath();g.arc(q[0],q[1],6,0,TAU);g.stroke();}}}  // the end will snap here on lift
+      if(sk.type==='line'&&ed.raw&&!ed.touch){const q=snapAt(S,ed.raw,sk.pts[0]);if(q){g.strokeStyle=ink.key;g.lineWidth=1.2;g.beginPath();g.arc(q[0],q[1],6,0,TAU);g.stroke();}}}  // the end will snap here on lift
+    if(ed.touch&&ed.snapped){const q=sk.type==='rope'?sk.a:sk.pts[0],u=Math.max(1,ed.u>SMALL?ed.u*.6:1);g.strokeStyle=ink.key;g.lineWidth=1.2*u;g.beginPath();g.arc(q[0],q[1],5*u,0,TAU);g.stroke();}  // snapped start
     if(lens)return;
     // ink cost under the pen, plus what it becomes in first person
     // sizes never drop below a readable CSS size (phones have well under one pixel per design unit)
@@ -526,19 +620,22 @@ export function createSide({canvas,getState,hooks={}}){
     const typed=()=>{g.font=`${f1}px ${TYPE}`;try{g.letterSpacing='0px';}catch(_){}},stencil=()=>{g.font=`800 ${f2}px ${STENCIL}`;try{g.letterSpacing=`${f2*.15}px`;}catch(_){}};
     g.textAlign='left';g.textBaseline='top';
     // with a finger down, keep the readout on the side away from the loupe
-    if(ed.touch&&ed.finger&&ed.loupeEff>0){typed();let w=g.measureText(num).width;stencil();w=Math.max(w,g.measureText(sub).width);x=clamp(pen[0]-14*u-w,4,W-w-4);}
+    let yy=y;
+    if(ed.touch&&ed.finger){   // clear of the fingertip: up and to the right, flipped left near the right edge, down beside it near the top
+      typed();let w=g.measureText(num).width;stencil();w=Math.max(w,g.measureText(sub).width);const[fx,fy]=ed.finger,side=fx+30*u+w>W-4?-1:1,hgt=gap+f2;
+      x=side>0?fx+30*u:fx-30*u-w;yy=fy-44*u-hgt;if(yy<4){yy=fy-hgt/2;x=side>0?fx+40*u:fx-40*u-w;}x=clamp(x,4,W-w-4);yy=clamp(yy,4,H-hgt-4);}
     // knock a halo out of the plate so the readout stays legible over blocks and lines
     g.save();g.globalCompositeOperation='destination-out';g.strokeStyle='#000';g.lineWidth=4;g.lineJoin='round';
-    typed();g.strokeText(num,x,y);stencil();g.strokeText(sub,x,y+gap);g.restore();
-    typed();g.fillStyle=ink.mid;g.fillText(num,x+1,y+.8);g.fillStyle=ink.key;g.fillText(num,x,y);
-    stencil();g.fillStyle=ed.full?ink.mid:ink.key;g.fillText(sub,x,y+gap);try{g.letterSpacing='0px';}catch(_){}}
+    typed();g.strokeText(num,x,yy);stencil();g.strokeText(sub,x,yy+gap);g.restore();
+    typed();g.fillStyle=ink.mid;g.fillText(num,x+1,yy+.8);g.fillStyle=ink.key;g.fillText(num,x,yy);
+    stencil();g.fillStyle=ed.full?ink.mid:ink.key;g.fillText(sub,x,yy+gap);try{g.letterSpacing='0px';}catch(_){}}
 
   // ---------- touch aids: the offset pen tip, its tether to the finger, and the loupe ----------
   function crosshair(g,S,x,y,u){const ink=S.ink;g.strokeStyle=ink.key;g.lineWidth=1.4*u;g.setLineDash([]);
     g.beginPath();g.arc(x,y,5*u,0,TAU);g.stroke();g.beginPath();
     for(const[dx,dy]of[[1,0],[-1,0],[0,1],[0,-1]]){g.moveTo(x+dx*7.5*u,y+dy*7.5*u);g.lineTo(x+dx*12*u,y+dy*12*u);}g.stroke();
     g.fillStyle=ink.key;g.beginPath();g.arc(x,y,1.1*u,0,TAU);g.fill();}
-  function touchAids(g,S,t){const ink=S.ink,u=ed.u,[fx,fy]=ed.finger;
+  function touchAids(g,S,t){if(!TOUCH_AIDS)return;const ink=S.ink,u=ed.u,[fx,fy]=ed.finger;
     // while dragging, the loupe and crosshair follow the handle being moved rather than the pen
     const di=ed.drag&&S.items[ed.drag.i],[px,py]=di?(ed.drag.kind==='well'?[di.x,di.y]:di[ed.drag.end]):ed.hover;
     g.save();g.lineCap='round';

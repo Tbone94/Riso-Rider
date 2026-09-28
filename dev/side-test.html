@@ -56,6 +56,8 @@ function printBg(L){const k=L.id;if(bgCache[k])return bgCache[k];const pw=800,ph
 
 const drift=w=>({steer:w.rider.grounded&&w.rider.groundKind==='line'?.45:0,jump:false,jumpHeld:false,push:0});
 const lv=id=>ALL.find(l=>l.id===id);
+const SLING_LEVEL=(ALL.find(l=>l.tools.includes('sling'))||lv('grand-tour')).id;
+const aimAt=(L,x,y)=>Math.round(Math.atan2(L.goal.y-y,L.goal.x-x)*1e4)/1e4;
 const SCEN=[
   {title:'First line · failed ghost (drifted off the tightrope)',level:'first-line',items:L=>L.solutions[0],policy:drift},
   {title:'Springy · failed ghost (popped)',level:'springy',items:()=>[{type:'rope',a:[140,400],b:[260,400]}],tool:'rope'},
@@ -64,6 +66,9 @@ const SCEN=[
   {title:'Pull · edit only, well tool',level:'pull',items:()=>[],tool:'well',noGhost:true},
   {title:'Grand tour · edit, all tools, failed ghost',level:'grand-tour',items:()=>[{type:'line',pts:[[132,166],[240,200],[330,240]]}]},
   {title:'Grand tour · drag a well or a rope end (hooks.moved → undo)',level:'grand-tour',items:()=>[{type:'well',x:300,y:330},{type:'rope',a:[170,420],b:[300,445]}],tool:'well',noGhost:true},
+  // contract v4: the sling. Uses the level that offers it if there is one, else Grand tour.
+  {title:'Sling · ghost with an orbit (ticks) and release arrow',level:SLING_LEVEL,items:L=>[{type:'sling',x:180,y:230,a:aimAt(L,180,230)}],tool:'sling'},
+  {title:'Sling · edit: hover the ring, drag it, drag the arrow handle (Shift = free aim)',level:SLING_LEVEL,items:L=>[{type:'sling',x:260,y:300,a:-0.8}],tool:'sling',noGhost:true},
   // round A: one tiny level per mechanic (DEV_LEVELS from levels.js)
   {title:'Dev drops · autopilot {drops:true}: filled = got',level:'dev-drops',items:()=>[],policy:'drops'},
   {title:'Dev drops · plain autopilot: hollow = missed',level:'dev-drops',items:()=>[]},
@@ -103,7 +108,7 @@ SCEN.forEach((sc,ci)=>{
   const hooks={onChange:ui,moved:prev=>{moves.push(prev);log.textContent=`moved · undo stack ${moves.length}`;},
     toast:m=>{toastEl.textContent=m;toastEl.classList.remove('show');void toastEl.offsetWidth;toastEl.classList.add('show');},
     flashInk:()=>{inkEl.classList.remove('flash');void inkEl.offsetWidth;inkEl.classList.add('flash');}};
-  L.tools.forEach(t=>{const b=document.createElement('button');b.dataset.tool=t;b.textContent=t;b.onclick=()=>{S.tool=t;ui();};bar.append(b);});
+  [...L.tools,...(sc.tool&&!L.tools.includes(sc.tool)?[sc.tool]:[])].forEach(t=>{const b=document.createElement('button');b.dataset.tool=t;b.textContent=t;b.onclick=()=>{S.tool=t;ui();};bar.append(b);});
   const btn=(label,fn)=>{const b=document.createElement('button');b.textContent=label;b.onclick=()=>{fn();ui();};bar.append(b);};
   btn('undo',()=>{if(moves.length)S.items=moves.pop();else S.items.pop();});btn('clear',()=>{S.items=[];});
   btn('ride (sim)',()=>{S.ghost=ghostOf(L,S.items,sc.policy);});btn('no ghost',()=>{S.ghost=null;});

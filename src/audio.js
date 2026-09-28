@@ -41,6 +41,11 @@
 //   ride wire (+ sway creak)       -20 (-17)          thin wire hum; creak follows rider.sway
 //   ride ice / air / wind / boost  -19/-19/-16/-17    glassy hiss / air rush / gusting current / flywheel whirr
 //   ride rope                        -22             low stretched twang, sags with rope depth
+//   sling release (v700 / v330)    -13 / -15          "thwip": band twang snapping up + snap + air tear
+//   sling capture                    -17             rubbery grab: low thud + short twang
+//   ride sling orbit                 -15             band stretch creak + whoosh + taut hum rising with slingK
+//   draw sling place                 -20             rubber band plucked against felt
+//   draw sling aim (per tick)        -25             wooden ratchet tooth, at most one per 60 ms
 
 const AC=typeof window!=='undefined'?(window.AudioContext||window.webkitAudioContext):null;
 const clamp=(v,a,b)=>v<a?a:v>b?b:v;
@@ -50,7 +55,8 @@ const jit=(x,amt)=>x*(1+(Math.random()*2-1)*amt);          // humanise: no two t
 // Level trims in dB for each one-shot (applied on the voice's output). This is the mix: tune here,
 // then re-measure with dev/audio-test.html. Continuous loops are balanced by RIDE_LVL / PEN_LVL below.
 const MIX={stampBig:2,stampStar:7.5,land:0,bounce:4,crumble:1,crack:0,win:-1.5,popped:5,drop:9.5,boost:6,jump:9.5,fell:4,stuck:-3,
-  press:6,tool:10.5,toggle:4.5,slip:7.5,undo:12,clear:2,next:-3,locked:-4,inkEmpty:11,well:-1.5,ropeSet:-5,lift:0,give:0};
+  press:6,tool:10.5,toggle:4.5,slip:7.5,undo:12,clear:2,next:-3,locked:-4,inkEmpty:11,well:-1.5,ropeSet:-5,lift:0,give:0,
+  slingSet:10,ratchet:14,slingIn:6,slingOut:11};
 const DROP_NOTES=[392,440,523.25,587.33,659.25,783.99,880,1046.5];
 
 // opts.context: render into a given (e.g. Offline) AudioContext — used by the dev page to measure levels.
@@ -220,6 +226,25 @@ export function createAudio(opts={}){
     // the pencil lifts off: a tiny dry tick
     lift(){const t=now(),v=voice(.1);if(!v)return;nz(v,{t,peak:.03,tau:.004,f:3000,q:1.5});},
 
+    // sling placed: a rubber band plucked once against a felt block
+    slingSet(){const t=now(),v=voice(.7,{pan:rnd(-.08,.08)});if(!v)return;
+      pluck(v,{f:jit(150,.03),f2:165,glide:.05,t,t60:.3,peak:.3,bright:1200});
+      nz(v,{buf:'brown',t,peak:.2,tau:.015,type:'lowpass',f:500});},
+    // aiming the sling: one tooth of a small wooden ratchet
+    ratchet(k){const t=now(),v=voice(.12,{pan:rnd(-.1,.1)});if(!v)return;
+      nz(v,{t,peak:.08+.05*k,tau:.003,f:jit(2300,.06),q:2.5});
+      osc(v,{f:jit(1250,.05),t,a:.001,peak:.02,tau:.006});osc(v,{f:380,t,a:.001,peak:.03,tau:.012});},
+    // sling capture: the band catches you: a soft rubbery grab (low thud + short twang)
+    slingIn(){const t=now(),v=voice(.6);if(!v)return;
+      osc(v,{f:140,f2:88,glide:.07,t,a:.003,peak:.16,tau:.05});
+      nz(v,{buf:'brown',t,peak:.22,tau:.025,type:'lowpass',f:600});
+      pluck(v,{f:118,t,t60:.22,peak:.18,bright:1000});},
+    // sling release: "thwip": the band's twang snapping up, a crisp snap, and air torn past.
+    // k (0..1) from release speed makes it brighter and a touch louder.
+    slingOut(k){const t=now(),v=voice(.6);if(!v)return;const l=.75+.25*k;
+      pluck(v,{f:170,f2:250+40*k,glide:.05,t,t60:.25,peak:.3*l,bright:1800});
+      nz(v,{t,peak:.14*l,tau:.005,f:1700,q:1.4});
+      nz(v,{buf:'pink',t,a:.008,hold:.03,peak:.3*l,tau:.05,f:600,f2:1800+900*k,sweep:.12,q:1});},
     // swoop "giving way": the paper gives and you're through: a muffled air thump and a short tear
     give(){const t=now(),v=voice(.7);if(!v)return;
       osc(v,{f:82,f2:55,glide:.12,t,a:.01,peak:.22,tau:.09});
@@ -376,10 +401,16 @@ export function createAudio(opts={}){
     // boost pad: a whirring fluttery buzz, like a spinning toy flywheel
     g.boostG=g.gain(0,g.gate);const bam=g.gain(.7,g.boostG);g.osc('sine',26,g.gain(.3,bam.gain));
     g.boostLP=g.filt('lowpass',600,3,bam);g.bsaw=g.osc('sawtooth',70,g.boostLP);
-    g.last=new Float32Array(32).fill(-1);g.world=null;g.streak=0;g.warned=new Uint8Array(64);g.swayPrev=0;g.watch=-1;g.active=true;
+    // sling orbit: the band stretching (stick-slip creak in a rubbery band) over air whooshing round,
+    // and a taut hum whose pitch climbs as the orbit winds toward release
+    g.slingG=g.gain(0,g.gate);
+    g.slBP=g.filt('bandpass',500,1,g.slingG);pink.connect(g.slBP);
+    g.slCbp=g.filt('bandpass',420,5,g.gain(.6,g.slingG));g.slSaw=g.osc('sawtooth',20,g.slCbp);
+    g.slLP=g.filt('lowpass',700,-3,g.gain(.35,g.slingG));g.slHum=g.osc('triangle',110,g.slLP);
+    g.last=new Float32Array(40).fill(-1);g.world=null;g.streak=0;g.warned=new Uint8Array(64);g.swayPrev=0;g.watch=-1;g.active=true;
     return g;}
   // loudness of each loop at full intensity (see the mix table)
-  const RIDE_LVL={road:.11,wire:.09,creak:.35,rope:.045,ice:.08,air:.25,wind:.3,boost:.08};
+  const RIDE_LVL={road:.11,wire:.09,creak:.35,rope:.045,ice:.08,air:.25,wind:.3,boost:.08,sling:.18};
 
   // ---------- public API ----------
   const api={
@@ -395,6 +426,10 @@ export function createAudio(opts={}){
     ui(name){if(!ok())return;const f=S[name];if(f&&name!=='give'&&name in UI_NAMES)f();},
     draw(tool,phase,speed){if(!ok())return;
       if(tool==='well'){if(phase==='start')S.well();return;}
+      if(tool==='sling'){const tt=performance.now();   // place = one pluck (start/end may both arrive); aim = ratchet ticks
+        if(phase!=='move'){if(tt-lastSling>150){lastSling=tt;S.slingSet();}}
+        else if(tt-lastTick>=60&&tt-lastSling>80){lastTick=tt;S.ratchet(clamp((+speed||0)/800,0,1));}
+        return;}
       if(!PEN_LVL[tool])return;
       const g=pen(),t=now();g.used=performance.now();
       if(phase==='start'||!g.tool){g.tool=tool;g.dist=0;g.at=t;g.active=true;
@@ -438,7 +473,11 @@ export function createAudio(opts={}){
       aim(g,2,g.creakG.gain,kind==='line'?L.creak*Math.min(1,Math.pow(Math.abs(sway),1.3)*.7+Math.min(1,sr*.35)*.5):0,.05);
       aim(g,3,g.ropeG.gain,kind==='rope'?L.rope*clamp(depth/10,.15,1):0,.03);
       aim(g,4,g.iceG.gain,kind==='ice'?L.ice*moving*(.35+.65*u):0,.04);
-      aim(g,5,g.airG.gain,L.air*(!r.grounded?clamp((sp-60)/480,0,1):.25*clamp((sp-250)/300,0,1)),.06);
+      const slung=r.sling!=null&&r.sling>=0,K=slung?clamp(+r.slingK||0,0,1):0;
+      aim(g,25,g.slingG.gain,slung?L.sling*(.45+.55*K):0,.03);
+      aim(g,26,g.slBP.frequency,450+1400*K,.03);aim(g,27,g.slSaw.frequency,18+40*K,.03);
+      aim(g,28,g.slCbp.frequency,380+320*K,.03);aim(g,29,g.slHum.frequency,110*(1+K),.03);
+      aim(g,5,g.airG.gain,(slung?.4:1)*L.air*(!r.grounded?clamp((sp-60)/480,0,1):.25*clamp((sp-250)/300,0,1)),.06);
       aim(g,6,g.windG.gain,inWind?L.wind:0,.08);
       aim(g,7,g.boostG.gain,boosting?L.boost:0,.04);
       // pitches and colours
@@ -462,6 +501,8 @@ export function createAudio(opts={}){
         case'bounce':return S.bounce(e.v!=null?e.v:r?r.speed:250);
         case'drop':{const n=g?g.streak++:dropN++;return S.drop(e.v||25,n);}
         case'boost':return S.boost();
+        case'sling':return S.slingIn();
+        case'slingOut':return S.slingOut(clamp(((e.v!=null?e.v:(r?r.speed:450))-320)/380,0,1));
         case'crumble':return S.crumble();
         case'win':return S.win();
         case'fell':return S.fell();
@@ -477,7 +518,7 @@ export function createAudio(opts={}){
     get _ctx(){return ctx;},
   };
   const UI_NAMES={press:1,tool:1,undo:1,clear:1,toggle:1,slip:1,locked:1,next:1};
-  let lastEmpty=-1e9,dropN=0;const lastEv={};
+  let lastEmpty=-1e9,dropN=0,lastSling=-1e9,lastTick=-1e9;const lastEv={};
   // Never let sound break the game: every public method swallows its own errors.
   for(const k of Object.keys(api)){const f=api[k];if(typeof f!=='function'||k[0]==='_')continue;
     api[k]=function(a,b,c){if(dead)return;try{return f.call(api,a,b,c);}catch(err){if(!warnedErr){warnedErr=true;console.warn('audio:',err);}}};}

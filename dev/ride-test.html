@@ -62,6 +62,7 @@ LEVELS.forEach((L,li)=>{const sols=L.solutions&&L.solutions.length?L.solutions:[
 VARIANTS.push({li:LI('first-line'),name:'First line · gap jump',items:[{type:'line',pts:[[152,136],[260,207.28]]},{type:'line',pts:[[340,243.28],[562,398]]}]});
 VARIANTS.push({li:LI('first-line'),name:'First line · stress 600 segs',items:[{type:'line',pts:wig},{type:'line',pts:wig.map(p=>[p[0],p[1]-60])},{type:'rope',a:[200,300],b:[330,330]},{type:'wind',pts:[[300,120],[420,150],[540,220]]}]});
 VARIANTS.push({li:LI('grand-tour'),name:'Grand tour · kitchen sink',items:[{type:'line',pts:[[130,161],[200,190],[240,200]]},{type:'rope',a:[250,300],b:[340,300]},{type:'wind',pts:[[182,210],[227,132],[331,34]]},{type:'well',x:520,y:200}]});
+VARIANTS.push({li:LI('springy'),name:'Springy · sling whip',items:[{type:'sling',x:180.3,y:200.3,a:-0.1289}]});
 VARIANTS.forEach((v,i)=>$('#lvl').add(new Option(v.name,i)));
 
 const S={li:0,level:null,items:[],mode:'ride',ink:{},pat:{},settings:{fov:90,bob:false,chase:false,reducedMotion:false,assist:0}};
