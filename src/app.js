@@ -64,6 +64,38 @@ function multiply(a,b){const p=h=>[1,3,5].map(i=>parseInt(h.slice(i,i+2),16));co
 function hash(s){let h=2166136261;for(const ch of s){h^=ch.charCodeAt(0);h=Math.imul(h,16777619);}return h>>>0;}
 function tilt(el,name){const h=hash(name),deg=(h&1?1:-1)*(.4+(h>>>1)%1000/1000*.8);el.style.setProperty('--tilt',deg.toFixed(2)+'deg');}
 
+// ---------- phone game mode (landscape, full screen) / portrait prompt ----------
+// CSS does the layout under html.gm; this decides when it applies. ?layout=game|desk forces it (for testing
+// at phone sizes on a desktop browser, which reports a fine pointer).
+const GMQ=matchMedia('(pointer:coarse) and (orientation:landscape) and (max-height:560px)');
+const TURNQ=matchMedia('(pointer:coarse) and (orientation:portrait) and (max-width:560px)');
+const forceLayout=(location.search.match(/[?&]layout=(game|desk)\b/)||[])[1]||null;
+let gameMode=false;
+function layout(){const root=document.documentElement,land=innerWidth>=innerHeight;
+  const gm=forceLayout?forceLayout==='game'&&land:GMQ.matches,turn=forceLayout?forceLayout==='game'&&!land:TURNQ.matches;
+  root.style.setProperty('--vh100',innerHeight+'px');
+  if(gm!==gameMode||root.classList.contains('turn')!==turn){gameMode=gm;root.classList.toggle('gm',gm);root.classList.toggle('turn',turn);if(!gm)toggleLevels(false);}
+  requestAnimationFrame(nudge);}
+function toggleLevels(open){const root=document.documentElement;open=open==null?!root.classList.contains('levels'):open;
+  root.classList.toggle('levels',!!open&&gameMode);$('#levelsbtn').setAttribute('aria-expanded',!!open&&gameMode);
+  if(open&&gameMode)renderJobs();}
+// Controls docked over the stage corners must not hide the start ledge or the goal: fade any that overlap.
+function nudge(){const els=$$('#tray,.acts,#barrow,#gear,#gmbar');els.forEach(e=>{e.classList.remove('overplay');e.style.removeProperty('--lift');});
+  if(!gameMode||!S.level||S.mode!=='edit')return;
+  const r=stage.getBoundingClientRect(),k=r.width/W,L=S.level,zones=[];
+  const Z=(x0,y0,x1,y1)=>zones.push([r.left+x0*k,r.top+y0*k,r.left+x1*k,r.top+y1*k]);
+  Z(L.start.x-34,L.start.y-40,L.start.x+40,L.start.y+26);
+  const G=L.goal;Z(G.x-G.r-16,G.y-G.r-16,G.x+G.r+16,G.y+G.r+16);
+  for(const p of L.blocks){const xs=p.map(q=>q[0]),ys=p.map(q=>q[1]),x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys);   // the start ledge
+    if(L.start.x>=x0-10&&L.start.x<=x1+10&&y0-L.start.y>-4&&y0-L.start.y<30)Z(x0,y0-24,x1,y0+22);}
+  const hit=(b,dy=0)=>zones.some(z=>b.left<z[2]&&b.right>z[0]&&b.top-dy<z[3]&&b.bottom-dy>z[1]);
+  for(const e of els){e.style.removeProperty('--lift');const b=e.getBoundingClientRect();if(!b.width||!hit(b))continue;
+    // bottom groups first try sliding up just clear of the start ledge / goal; the top bars just fade
+    if(e.matches('#tray,.acts')){let dy=0;const room=b.top-52;while(dy<=room&&hit(b,dy))dy+=6;
+      if(dy<=room){e.style.setProperty('--lift',dy+'px');continue;}}
+    e.classList.add('overplay');}}
+function showHint(){if(S.level&&S.level.hint)slip([esc(S.level.hint)],{hold:3800});}
+
 // ---------- sizing ----------
 let px=1,cssW=W,speck=null;
 function resize(){const r=stage.getBoundingClientRect();if(r.width<2)return;
@@ -161,6 +193,7 @@ function load(i){i=clamp(i|0,0,LEVELS.length-1);cancelRide();hideWin();hideOffer
   const rs=document.documentElement.style,I=S.ink;
   [['--light',I.light],['--mid',I.mid],['--key',I.key],['--lm',multiply(I.light,I.mid)],['--mk',multiply(I.mid,I.key)],['--lk',multiply(I.light,I.key)]].forEach(([k,v])=>rs.setProperty(k,v));
   $('#num').textContent=pad2(i+1);$('#lname').textContent=L.name;$('#hint').textContent=L.hint||'';
+  $('#gmnum').textContent=pad2(i+1);$('#gmlname').textContent=L.name;toggleLevels(false);
   $$('[data-tool]').forEach(b=>b.hidden=!L.tools.includes(b.dataset.tool));
   if(!L.tools.includes(S.tool))S.tool=L.tools[0];
   const n3=$('#n3'),n2=$('#n2');n3.style.left=((1-L.par[0]/L.ink)*100)+'%';n2.style.left=((1-L.par[1]/L.ink)*100)+'%';
@@ -168,8 +201,10 @@ function load(i){i=clamp(i|0,0,LEVELS.length-1);cancelRide();hideWin();hideOffer
   store.set(KEY.last,L.id);renderJobs();applyMode();
   // First run (no stars anywhere yet, level 1, nothing drawn): two short notes: how to draw, then how to ride.
   coach=i===0&&!Object.keys(progress).length&&!S.items.length?1:0;
-  refreshBg().then(()=>{if(coach===1&&S.level===L&&S.mode==='edit'&&!S.items.length)
-    slip([isTouch()?'Drag your finger across the picture to draw a line from the ledge to the ring.':'Drag across the picture to draw a line from the ledge to the ring.'],{hold:4200});});}
+  refreshBg().then(()=>{if(S.level!==L||S.mode!=='edit')return;
+    if(coach===1&&!S.items.length)slip([isTouch()?'Drag your finger across the picture to draw a line from the ledge to the ring.':'Drag across the picture to draw a line from the ledge to the ring.'],{hold:4200});
+    else if(gameMode)showHint();});   // game mode has no hint line, so the hint arrives as a slip (tap the level name for it again)
+  requestAnimationFrame(nudge);}
 let coach=0;
 function cloneItems(a){try{return JSON.parse(JSON.stringify(a)).filter(it=>it&&typeof it.type==='string');}catch(e){return[];}}
 function saveDraft(){if(!S.level)return;const id=S.level.id,items=S.items;clearTimeout(saveDraft.t);saveDraft.t=setTimeout(()=>{drafts[id]=items;store.set(KEY.drafts,drafts);},250);}
@@ -200,7 +235,7 @@ function ui(){lastMeter='';meter();slug();$$('[data-tool]').forEach(b=>{const on
   $('#undo').disabled=!S.items.length&&!lastCleared;$('#clear').disabled=!S.items.length;}
 function applyMode(){const m=S.mode;stage.classList.toggle('editing',m==='edit');stage.classList.toggle('riding',m==='ride');stage.classList.toggle('winning',m==='win');
   $('#editbar').hidden=m!=='edit';$('#ridebar').hidden=m!=='ride';$('#winbar').hidden=m!=='win';$('#hud').hidden=m!=='ride';
-  if(m!=='ride'){bgr.style.transform='';bgT='';}ui();}
+  if(m!=='ride'){bgr.style.transform='';bgT='';}document.documentElement.dataset.mode=m;ui();requestAnimationFrame(nudge);}
 function onChange(){lastActivity=performance.now();lastCleared=null;
   if(S.items.length>lastLen)hist.push('add');lastLen=S.items.length;ui();saveDraft();
   if(coach===1&&S.items.length&&!S.stroke){coach=2;slip([isTouch()?'Nice line. Tap RIDE to ride it.':'Nice line. Press RIDE or Enter to ride it.'],{hold:3000});}}
@@ -225,7 +260,7 @@ function slip(lines,{mark='note',hold=1400}={}){
 function hideSlip(){clearTimeout(slipTimer);if(slipAnim)slipAnim.cancel();slipAnim=null;slipEl.style.visibility='hidden';}
 function toast(msg){slip([esc(msg)]);}
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const isTouch=()=>document.body.classList.contains('touch');
+const isTouch=()=>gameMode||document.body.classList.contains('touch');
 
 // ---------- transitions ----------
 const wipeEl=$('#wipe'),flashEl=$('#flash');
@@ -360,6 +395,13 @@ function togglePanel(open=!panelOpen){panelOpen=open;const el=$('#panel');$('#ge
   syncSettings();tilt(el,'panel');el.hidden=false;
   el.animate(S.settings.reducedMotion?[{opacity:0},{opacity:1}]:[{translate:'0 -10px',opacity:0},{translate:'0 0',opacity:1}],{duration:S.settings.reducedMotion?120:170,easing:'ease-out'});}
 $('#gear').onclick=()=>togglePanel();
+$('#gmdone').onclick=()=>togglePanel(false);
+$('#gmname').onclick=showHint;
+$('#levelsbtn').onclick=()=>toggleLevels();
+// game mode sheets close when you tap anywhere else
+addEventListener('pointerdown',e=>{if(!gameMode)return;const t=e.target;
+  if(document.documentElement.classList.contains('levels')&&!t.closest('#board,#levelsbtn'))toggleLevels(false);
+  if(panelOpen&&!t.closest('#panel,#gear'))togglePanel(false);},true);
 $('#s-fov').oninput=e=>{S.settings.fov=+e.target.value;syncSettings();saveSettings();};
 [['#s-chase','chase'],['#s-bob','bob'],['#s-rm','reducedMotion'],['#s-snd','sound']].forEach(([sel,k])=>{$(sel).dataset.snd='toggle';$(sel).onclick=()=>{S.settings[k]=!S.settings[k];syncSettings();saveSettings();applySound();};});
 function applySound(){A('setMuted',!S.settings.sound);A('setVolume',S.settings.volume);}
@@ -503,7 +545,11 @@ function applyBgTransform(out){const b=out&&out.bg;let s='';
   if(s!==bgT){bgT=s;bgr.style.transform=s;}}
 
 // ---------- boot ----------
-new ResizeObserver(resize).observe(stage);
+layout();
+addEventListener('resize',layout);addEventListener('orientationchange',layout);
+[GMQ,TURNQ].forEach(q=>q.addEventListener&&q.addEventListener('change',layout));
+if(window.visualViewport)visualViewport.addEventListener('resize',layout);
+new ResizeObserver(()=>{resize();requestAnimationFrame(nudge);}).observe(stage);
 resize();
 const lastId=store.get(KEY.last,null),startAt=Math.max(0,LEVELS.findIndex(l=>l.id===lastId));
 syncSettings();load(startAt);applySound();

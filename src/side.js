@@ -26,8 +26,9 @@ const REASON={fell:'FELL',popped:'POPPED',stuck:'STUCK',timeout:'STUCK'};
 const WIDTH_NAME={line:'TIGHTROPE',rope:'TRAMPOLINE',wind:'TAILWIND'};
 const GHOST_SPACING=[6,13,8,12];                    // arc-length between marks per state: ground, air, rope, wind
 const MONO='ui-monospace,Menlo,Consolas,monospace';
-// Touch drawing (contract v3): the pen sits OFF_PX CSS pixels above the finger, with a LOUPE_PX magnifier beside it.
-const OFF_PX=60, LOUPE_PX=90, LOUPE_ZOOM=2;
+// Touch drawing: the line goes exactly where the finger is (the player asked for this over an offset pen),
+// and a LOUPE_PX magnifier beside the finger shows what the fingertip is covering. OFF_PX>0 would restore an offset pen.
+const OFF_PX=0, LOUPE_PX=90, LOUPE_ZOOM=2;
 // The two faces from UI.md: the stencil for labels and stamps, the typewriter for small typed notes.
 const STENCIL=`'Big Shoulders Stencil Display',${MONO}`, TYPE=`'Cutive Mono',${MONO}`;
 
@@ -77,7 +78,7 @@ export function createSide({canvas,getState,hooks={}}){
   const grow=()=>ed.u>SMALL?Math.min(1.8,1+(ed.u-SMALL)*.5):1;
   // Where the pen is. Mouse and stylus draw exactly under the pointer. A finger draws OFF_PX above itself; near the
   // top of the sheet the offset ramps down (monotonic, so the pen never jumps) so the very top is still reachable.
-  function penOf(e,touch){const p=pos(e);if(!touch)return p;const off=OFF_PX*unitsPerPx(),eff=off*clamp(p[1]/(1.5*off),0,1);return[p[0],p[1]-eff];}
+  function penOf(e,touch){const p=pos(e);if(!touch||!OFF_PX)return p;const off=OFF_PX*unitsPerPx(),eff=off*clamp(p[1]/(1.5*off),0,1);return[p[0],p[1]-eff];}
   // Drawing phases for sound (app.js hooks.draw): start / move with pen speed in design units per second / end.
   function phase(tool,ph,p){const n=performance.now();let sp=0;
     if(ph==='move'&&ed.penP){sp=Math.min(4000,dist(ed.penP,p)/Math.max(.001,(n-ed.penT)/1000));}
@@ -115,8 +116,12 @@ export function createSide({canvas,getState,hooks={}}){
     if(d.moved&&JSON.stringify(it)!==JSON.stringify(d.orig)){call('moved',d.before);phase(d.kind,'start',null);phase(d.kind,'end',null);}
     call('onChange');}
 
+  // Block corners on a ridable top edge snap LINE_TH below the corner, so a drawn line's top sits flush with the
+  // block's top. Snapping onto the corner itself leaves the line's thickness as a lip the rider bumps into and sticks on.
+  const LINE_TH=2.5;   // physics: drawn-line segments have th 2.5 (build() in physics.js)
   function snapTargets(S){const out=[];
-    for(const k of['blocks','ice','crumble'])(S.level[k]||[]).forEach(p=>p.forEach(q=>out.push(q)));
+    for(const k of['blocks','ice','crumble'])(S.level[k]||[]).forEach(p=>{const tops=new Set();topEdges(p).forEach(([a,b])=>{tops.add(a);tops.add(b);});
+      p.forEach(q=>out.push(tops.has(q)?[q[0],q[1]+LINE_TH]:q));});
     S.items.forEach(it=>{if(it.type==='line'||it.type==='wind'){if(it.pts.length){out.push(it.pts[0]);out.push(it.pts[it.pts.length-1]);}}
       else if(it.type==='rope'){out.push(it.a);out.push(it.b);}});
     return out;}

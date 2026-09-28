@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Riso Rider trailer</title>
+<style>
+@font-face{font-family:'Big Shoulders Stencil Display';font-weight:700 900;src:url(../fonts/big-shoulders-stencil-display-latin.woff2) format('woff2')}
+@font-face{font-family:'Cutive Mono';font-weight:400;src:url(../fonts/cutive-mono-latin.woff2) format('woff2')}
+body{margin:0;background:#f2ede3;color:#3d5588;font:14px/1.4 "Cutive Mono",monospace;padding:16px}
+#view{width:min(100%,960px);aspect-ratio:16/9;display:block;background:#fff;outline:1px solid #3d558844}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin:10px 0}
+button{font:800 14px/1 "Big Shoulders Stencil Display";letter-spacing:.14em;border:2px solid currentColor;background:none;color:inherit;padding:8px 12px;cursor:pointer}
+#status{white-space:pre-wrap}
+</style>
+</head>
+<body>
+<canvas id="view" width="1920" height="1080"></canvas>
+<div class="row">
+  <button id="bPlay">PREVIEW</button>
+  <button id="bSheet">CONTACT SHEET</button>
+  <button id="bRender">RENDER MP4</button>
+</div>
+<div id="status">loading…</div>
+<script src="../riso.js"></script>
+<script type="module" src="trailer.js"></script>
+</body>
+</html>
