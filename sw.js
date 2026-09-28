@@ -1,10 +1,11 @@
 // sw.js — offline support for the installed app.
 // Network first, cache as fallback: you always get the newest build when online (so development
 // never serves stale code), and the last-seen build still plays with no connection.
-const CACHE = 'riso-rider-v3';
+const CACHE = 'riso-rider-v4';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest', 'riso.js',
   'src/app.js', 'src/physics.js', 'src/levels.js', 'src/side.js', 'src/ride.js', 'src/audio.js',
+  'src/levels/ch2.js', 'src/levels/ch3.js', 'src/levels/ch4.js', 'src/levels/ch5.js', 'src/levels/ch6.js',
   'fonts/big-shoulders-stencil-display-latin.woff2', 'fonts/big-shoulders-stencil-display-latin-ext.woff2',
   'fonts/cutive-mono-latin.woff2', 'fonts/cutive-mono-latin-ext.woff2',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/apple-touch-icon.png', 'icons/favicon-32.png',

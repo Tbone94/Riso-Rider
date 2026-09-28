@@ -189,7 +189,7 @@ export function step(w,L,input=NO_INPUT){
         if(Math.hypot(r.x-cx,r.y-cy)<=BOOST.reach&&Math.abs(r.z)<=WIDTH.block+R*.4){on=bi;const va=r.vx*b.tx+r.vy*b.ty;if(va<BOOST.speed){const dv=Math.min(BOOST.acc*h,BOOST.speed-va);ax+=b.tx*dv/h;ay+=b.ty*dv/h;}break;}}
       if(on>=0&&r.boost!==on)w.events.push({type:'boost',i:on,x:r.x,y:r.y,t:w.t});r.boost=on;}
     else if(!r.grounded&&r.airT>.1)r.boost=-1;
-    r.vx+=ax*h;r.vy+=ay*h;
+    r.vx+=ax*h;r.vy+=ay*h;const pvx=r.vx,pvy=r.vy;
     const ox=r.x,oy=r.y;r.x+=r.vx*h;r.y+=r.vy*h;
     // Contacts. A surface only counts while you're over it laterally, and only if you reach it
     // from outside: if you were already deep inside it before this substep (you fell past it
@@ -204,6 +204,9 @@ export function step(w,L,input=NO_INPUT){
       if(s.crumble!=null&&w.crumbles[s.crumble].touchedAt==null)w.crumbles[s.crumble].touchedAt=w.t;
       if(!contact||ny<contact[1])contact=[nx,ny,s];}     // keep the most floor-like contact
     r.vx=(r.x-ox)/h;r.vy=(r.y-oy)/h;
+    // Contacts only redirect or absorb speed. When a surface pinches the rider (a line wedged against a block,
+    // a sling releasing inside a ledge), stacked push-outs would otherwise turn into a launch at thousands/s.
+    if(contact){const s0=Math.hypot(pvx,pvy)+1,s1=Math.hypot(r.vx,r.vy);if(s1>s0){const k=s0/s1;r.vx*=k;r.vy*=k;}}
     if(contact){const[nx,ny,s]=contact,vn=r.vx*nx+r.vy*ny,tx=r.vx-nx*vn,ty=r.vy-ny*vn,f=s.kind==='ice'?0:FRICTION;r.vx-=tx*f;r.vy-=ty*f;
       if(ny<-.2){grounded=true;r.n=[nx,ny];r.groundHw=s.hw;r.groundKind=s.kind==='line'?'line':'block';r.surface=s.kind;r.owner=s.owner;}}   // walls/ceilings aren't ground
     r.a+=r.vx*h/R;
@@ -267,8 +270,17 @@ function orbit(w,r){const sl=w.slings[r.sling],s=r.slingSpeed,om=s/sl.ro;let dth
   r.x=sl.x+sl.ro*Math.cos(r.slingAng);r.y=sl.y+sl.ro*Math.sin(r.slingAng);
   const tx=-Math.sin(r.slingAng)*r.slingDir,ty=Math.cos(r.slingAng)*r.slingDir;r.vx=tx*s;r.vy=ty*s;r.speed=s;
   r.z*=Math.exp(-SLING.zEase*DT);r.vz=0;r.a+=s*DT/R;r.airT+=DT;
+  // The release point sits ro from the centre; placed against a ledge it can land inside rock, where the rider would
+  // be stuck (collisions skip surfaces you start inside). Then release from the centre, where the player put the sling.
+  if(done&&!clearAt(w,r.x,r.y)&&clearAt(w,sl.x,sl.y)){r.x=sl.x;r.y=sl.y;}
   if(done){const v=SLING.launch;r.vx=Math.cos(sl.a)*v;r.vy=Math.sin(sl.a)*v;r.speed=v;
     w.events.push({type:'slingOut',i:r.sling,x:r.x,y:r.y,t:w.t,v});r.slingLast=r.sling;r.slingLastT=w.t;r.slingLeft=false;r.sling=-1;r.slingK=1;r.slingFly=0;}}
+// Is (x,y) open air for the rider: outside every solid polygon and not touching any surface?
+function inPoly(p,x,y){let c=false;for(let i=0,j=p.length-1;i<p.length;j=i++){const[xi,yi]=p[i],[xj,yj]=p[j];if((yi>y)!==(yj>y)&&x<(xj-xi)*(y-yi)/(yj-yi)+xi)c=!c;}return c;}
+function clearAt(w,x,y){const L=w.level;if(L){if(L.blocks.some(p=>inPoly(p,x,y))||(L.ice||[]).some(p=>inPoly(p,x,y)))return false;
+    if((L.crumble||[]).some((p,i)=>!w.crumbles[i].gone&&inPoly(p,x,y)))return false;}
+  for(const si of near(w,x,y)){const s=w.segs[si];if(s.crumble!=null&&w.crumbles[s.crumble].gone)continue;const[cx,cy]=closest(x,y,s.ax,s.ay,s.bx,s.by);if(Math.hypot(x-cx,y-cy)<R+s.th)return false;}
+  return true;}
 // Preview of a sling's throw: the release point and the ballistic arc for t seconds, as the physics does it.
 // dir is the turn direction (+1 = clockwise on screen, i.e. increasing angle with y down; the release point
 // sits on the side of the ring that depends on it). The side view draws this so it matches exactly.

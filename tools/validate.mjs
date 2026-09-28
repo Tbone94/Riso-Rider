@@ -2,6 +2,8 @@
 // node tools/validate.mjs --search N  random-search N placements per level (default 4000): how many
 //                                     win, and the cheapest wins (for setting par)
 // options:  --level <id>   only that level      --quick   skip the difficulty report     --maps  print sling/well win maps
+//           --file <path>  check the levels in that module's default export instead of src/levels.js
+//                          (a chapter file under src/levels/; used while authoring a chapter on its own)
 //           --density N    placements for solution density (default 600)
 //           --clumsy N     clumsy-rider runs per assist level (default 50)
 //
@@ -22,30 +24,40 @@
 // The curve should be a sawtooth: the score rises level to level, and dips on a level that brings
 // in a new tool. Level 1 should be near-trivial on both axes, and no level should spike both.
 import * as P from '../src/physics.js';
-import {LEVELS} from '../src/levels.js';
 import {clumsyRider,humanRider} from './tests/fairness.mjs';
-import {DEV_LEVELS} from '../src/levels.js';
 import {Worker,isMainThread,parentPort,workerData} from 'node:worker_threads';
+import {resolve} from 'node:path';
+import {pathToFileURL} from 'node:url';
 
 const args=process.argv.slice(2),opt=(k,d)=>{const i=args.indexOf(k);return i<0?d:(args[i+1]&&!args[i+1].startsWith('--')?args[i+1]:true);};
+// --file: load just that chapter module (so a half-written chapter elsewhere can't break this run).
+const FILE=(!isMainThread&&workerData&&workerData.file)||(isMainThread&&opt('--file',null))||null;
+export const LEVELS=FILE?(await import(pathToFileURL(resolve(FILE)).href)).default:(await import('../src/levels.js')).LEVELS;
+const DEV_LEVELS=FILE?[]:(await import('../src/levels.js')).DEV_LEVELS;
 function rng(seed){let s=(seed*2654435761>>>0)||1;return()=>{s^=s<<13;s>>>=0;s^=s>>>17;s^=s<<5;s>>>=0;return s/4294967296;};}
 
 // ---------- random placements (shared by --search and the density measure) ----------
 // Half the strokes start (and some end) near a block corner, like a player hooking a line onto a ledge.
 const rint=(r,a,b)=>a+Math.floor(r()*(b-a+1));
 const anchorsOf=L=>L._anchors||(L._anchors=L.blocks.flat().filter(([x])=>x>0&&x<800));
-const nearAnchor=(L,r)=>{const a=anchorsOf(L)[Math.floor(r()*anchorsOf(L).length)];return[Math.max(0,Math.min(800,a[0]+rint(r,-20,20))),Math.max(0,a[1]+rint(r,-25,10))];};
+const nearAnchor=(L,r)=>{if(!anchorsOf(L).length)return[rint(r,0,760),rint(r,20,480)];const a=anchorsOf(L)[Math.floor(r()*anchorsOf(L).length)];return[Math.max(0,Math.min(800,a[0]+rint(r,-20,20))),Math.max(0,a[1]+rint(r,-25,10))];};
 export function sample(L,r){const tools=L.tools,k=r()<.6?1:r()<.85?2:3,items=[];
   for(let i=0;i<k;i++){const t=tools[Math.floor(r()*tools.length)];
     if(t==='well'){let x,y;do{x=rint(r,20,780);y=rint(r,20,480);}while(Math.hypot(x-L.goal.x,y-L.goal.y)<P.WELL.keepOut);items.push({type:'well',x,y});continue;}
     // Slings: half aimed roughly at the goal (±0.5 rad), like a player would, half anywhere.
-    if(t==='sling'){const x=rint(r,20,780),y=rint(r,20,480),a=r()<.5?Math.atan2(L.goal.y-y,L.goal.x-x)+(r()-.5):(r()*2-1)*Math.PI;items.push({type:'sling',x,y,a:Math.round(a*100)/100});continue;}
+    if(t==='sling'){let x,y;do{x=rint(r,20,780);y=rint(r,20,480);}while(Math.hypot(x-L.goal.x,y-L.goal.y)<SLING_KEEPOUT);const a=r()<.5?Math.atan2(L.goal.y-y,L.goal.x-x)+(r()-.5):(r()*2-1)*Math.PI;items.push({type:'sling',x,y,a:Math.round(a*100)/100});continue;}
     if(t==='rope'){const x=rint(r,0,760),y=rint(r,40,480),l=rint(r,40,260),a=(r()-.5)*1.4;items.push({type:'rope',a:[x,y],b:[Math.round(x+Math.cos(a)*l),Math.round(y+Math.sin(a)*l)]});continue;}
+    // Winds: a third of the strokes blow any way at all (updrafts, back-gusts, downdrafts), the rest left to right like lines.
+    if(t==='wind'&&r()<1/3){const n=rint(r,2,3),pts=[r()<.5?nearAnchor(L,r):[rint(r,0,780),rint(r,20,480)]];let a=r()*Math.PI*2;
+      for(let j=1;j<n;j++){a+=(r()-.5)*1.2;const l=rint(r,40,220),p=pts[j-1];pts.push([Math.max(0,Math.min(800,Math.round(p[0]+Math.cos(a)*l))),Math.max(0,Math.min(490,Math.round(p[1]+Math.sin(a)*l)))]);}
+      items.push({type:'wind',pts});continue;}
     const n=rint(r,2,3),pts=[r()<.5?nearAnchor(L,r):[rint(r,0,760),rint(r,20,480)]];
     for(let j=1;j<n;j++){const p=pts[j-1];pts.push([Math.min(800,p[0]+rint(r,30,300)),Math.max(0,Math.min(490,p[1]+rint(r,t==='wind'?-260:-120,t==='wind'?120:220)))]);}
     if(t==='line'&&r()<.3){const e=nearAnchor(L,r);if(e[0]>pts[0][0]+20)pts[n-1]=e;}
     items.push({type:t,pts});}
   return items;}
+// The editor refuses slings this close to the goal (side.js keepOut), so neither the search nor a listed solution may use one.
+const SLING_KEEPOUT=80;
 // N affordable placements; returns the wins sorted by cost.
 // 3★ par may be at most PAR_RATIO × the cheapest solution found, when that cheapest is under PAR_CHEAP ink.
 // (Above 200 ink the cheapest is usually a long, well-tuned stroke, and 1.6× would be meaninglessly loose.)
@@ -56,7 +68,7 @@ export function search(L,N,seed=12345,maxT=15){const r=rng(seed),wins=[];let tri
   return{tried,wins:wins.sort((a,b)=>a.cost-b.cost)};}
 
 // ---------- per-level work (runs in a worker thread) ----------
-function checkLevel(L,{quick,densityN,clumsyN}){
+export function checkLevel(L,{quick,densityN,clumsyN}){
   const problems=[],rows=[];const fail=m=>problems.push(`${L.id}: ${m}`);
   const empty=P.simulate(L,[],{policy:'auto'});
   if(empty.status==='win')fail('(a) empty drawing wins under auto');
@@ -66,6 +78,8 @@ function checkLevel(L,{quick,densityN,clumsyN}){
     const cost=P.inkUsed(items),a=P.simulate(L,items,{policy:'auto'}),n=P.simulate(L,items,{policy:'none'});
     if(a.status!=='win')fail(`(b) solution ${i+1} ${a.status} under auto at (${a.x},${a.y},z ${a.z})`);
     if(cost>L.ink)fail(`(c) solution ${i+1} costs ${Math.round(cost)} > ink ${L.ink}`);
+    if(items.some(it=>it.type==='sling'&&Math.hypot(it.x-L.goal.x,it.y-L.goal.y)<SLING_KEEPOUT))fail(`(d) solution ${i+1} puts a sling within ${SLING_KEEPOUT} of the goal (the editor refuses that)`);
+    if(!items.every(it=>L.tools.includes(it.type)))fail(`(d) solution ${i+1} uses a tool the level doesn't offer`);
     rows.push({i:i+1,cost:Math.round(cost),stars:P.stars(L,cost),auto:a.status,autoT:a.t,jumps:a.jumps,none:n.status,noneT:n.t});});
   const drop=dropBalance(L,problems,{clumsyN:quick?0:Math.min(30,clumsyN)});
   const well=L.tools.includes('well')?wellSmoothness(L,problems):null;
@@ -100,7 +114,7 @@ function slingFallPath(L){const w=P.build(L,[]),pts=[];let last=null;
   while(w.status==='run'&&w.t<6){P.step(w,L,P.NO_INPUT);const r=w.rider;
     if(!r.grounded&&r.y>L.start.y+10&&r.y<P.H-20&&(!last||Math.hypot(r.x-last[0],r.y-last[1])>=15)){last=[r.x,r.y];pts.push(last);}}
   return pts;}
-function slingCheck(L,problems){const intro=L.tools.length===1,pts=slingFallPath(L);
+export function slingCheck(L,problems){const intro=L.tools.length===1,pts=slingFallPath(L);
   const learnMap=pts.map(([x,y])=>P.simulate(L,[{type:'sling',x,y,a:Math.atan2(L.goal.y-y,L.goal.x-x)}],{policy:'auto',maxT:10}).status==='win');
   const learn=pts.length?learnMap.filter(Boolean).length/pts.length:0;
   if(intro&&learn<SLING_LEARN)problems.push(`${L.id}: sling: only ${Math.round(learn*100)}% of slings on the fall path aimed at the goal win (want ≥ ${SLING_LEARN*100}%)`);
@@ -139,7 +153,7 @@ function wellSmoothness(L,problems){const sol=L.solutions.find(x=>x.filter(i=>i.
 // the obvious drawing; everything else is risky (off-centre, above the line, or off the route).
 const TOL=.06;   // "± a little" on the ratio bands
 const START_CLEAR=140;   // no drop this close to the start
-function dropBalance(L,problems,{clumsyN}){const fail=m=>problems.push(`${L.id}: drops: ${m}`);
+export function dropBalance(L,problems,{clumsyN}){const fail=m=>problems.push(`${L.id}: drops: ${m}`);
   const D=L.drops||[],sol=L.solutions[0],O=Math.round(P.inkUsed(sol)),P3=L.par[0],gap=O-P3;
   if(D.length<2||D.length>5)fail(`${D.length} drops (want 2–5)`);
   if((L.id==='first-line'||L.id==='mind-the-gap')&&D.length>3)fail('levels 1–2 keep to 2–3 obvious drops');
@@ -169,13 +183,13 @@ function dropBalance(L,problems,{clumsyN}){const fail=m=>problems.push(`${L.id}:
   let cGot=0,cWin=0;for(let i=0;i<clumsyN;i++){const r=P.simulate(L,sol,{policy:clumsyRider(700+i,1,{drops:true})});cGot+=r.world.drops.filter(d=>d.got).reduce((s,d)=>s+d.v,0);if(r.status==='win')cWin++;}
   return{n:D.length,O,P3,gap,safe,all,st,hunt:hunt.refund,collect:clumsyN?cGot/(clumsyN*all||1):null,cwin:clumsyN?cWin/clumsyN:null};}
 
-if(!isMainThread){const L=LEVELS.find(l=>l.id===workerData.id);
+if(!isMainThread&&workerData&&workerData.role==='validate'){const L=LEVELS.find(l=>l.id===workerData.id);
   if(workerData.mode==='search'){const{tried,wins}=search(L,workerData.N,12345,15);
     for(const w of wins)w.none=P.simulate(L,w.items,{policy:'none',maxT:15}).status;parentPort.postMessage({tried,wins});}
   else parentPort.postMessage(checkLevel(L,workerData.o));}
 else if(process.argv[1]&&new URL(import.meta.url).pathname===(await import('node:path')).resolve(process.argv[1])){
   const only=opt('--level',null),levels=LEVELS.filter(L=>!only||L.id===only);
-  const run=(L,data)=>new Promise((res,rej)=>{const wk=new Worker(new URL(import.meta.url),{workerData:{id:L.id,...data}});wk.once('message',res);wk.once('error',rej);});
+  const run=(L,data)=>new Promise((res,rej)=>{const wk=new Worker(new URL(import.meta.url),{workerData:{role:'validate',id:L.id,file:FILE,...data}});wk.once('message',res);wk.once('error',rej);});
   const pad=(s,n)=>String(s).padEnd(n),pct=v=>(v*100).toFixed(v<.1?1:0)+'%';
   const searchN=opt('--search',0);
   if(searchN){const N=searchN===true?4000:+searchN,t0=Date.now();

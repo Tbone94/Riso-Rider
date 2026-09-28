@@ -6,7 +6,14 @@
 //   start     rider spawn and initial push; goal = ring the rider must pass through
 //   blocks    solid polygons (extruded wide in first person); hazards = polylines that pop the rider
 //   solutions known-good item lists, re-checked by tools/validate.mjs (policy: 'auto' unless noted)
-export const LEVELS=[
+// Levels 1–10 (the tutorial) live here; chapters 2–6 (levels 11–50) live in src/levels/chN.js.
+// LEVELS.md has the design plan for the chapters.
+import ch2 from './levels/ch2.js';
+import ch3 from './levels/ch3.js';
+import ch4 from './levels/ch4.js';
+import ch5 from './levels/ch5.js';
+import ch6 from './levels/ch6.js';
+const TUTORIAL=[
   {id:'first-line',name:'First line',tools:['line'],parFrom:'no-jump',ink:700,par:[300,500],
    hint:'Draw a line that carries the rider from the ledge to the ring, then press Ride.',
    bg:{scene:'park',seed:3,inks:['Sunflower','Orange','Federal Blue']},
@@ -78,12 +85,12 @@ export const LEVELS=[
    hazards:[[[0,486],[380,486]],[[420,486],[800,486]]],
    drops:[{x:255,y:103,v:55},{x:644,y:31,v:55},{x:189,y:135,z:32,v:70},{x:361,y:42,z:30,v:70}],
    solutions:[[{type:'wind',pts:[[133,183],[410,0]]}],
-     [{type:'sling',x:138,y:188,a:-0.39}],
+     [{type:'sling',x:138,y:188,a:-0.62}],
      [{type:'wind',pts:[[182,210],[227,132],[331,34]]}],
      [{type:'wind',pts:[[140,141],[307,38]]}],
      [{type:'rope',a:[51,214],b:[218,281]}]]},
-  // ---- Prototypes (round A): one new level element each, using tools already taught. ----
-  {id:'boost',name:'Boost (prototype)',prototype:true,curve:'dip',tools:['line'],ink:250,par:[60,220],
+  // ---- Level elements (round A): one new element each, using tools already taught. ----
+  {id:'boost',name:'Boost',curve:'dip',tools:['line'],ink:250,par:[60,220],
    hint:'Chevron pads fling you forward. Ride one fast enough to clear the gap.',
    bg:{scene:'cutouts',seed:11,inks:['Sunflower','Bright Red','Medium Blue']},
    start:{x:30,y:141,vx:150},goal:{x:740,y:277,r:26},
@@ -96,7 +103,7 @@ export const LEVELS=[
      [{type:'line',pts:[[110,160],[170,175]]}],
      [{type:'line',pts:[[156,79],[191,65]]}],
      [{type:'line',pts:[[222,300],[274,295]]}]]},
-  {id:'black-ice',name:'Black ice (prototype)',prototype:true,curve:'rise',tools:['line'],ink:300,par:[40,250],
+  {id:'black-ice',name:'Black ice',curve:'rise',tools:['line'],ink:300,par:[40,250],
    hint:'Ice keeps all your speed but you can’t steer on it, so line up before you slide.',
    bg:{scene:'bauhaus',seed:9,inks:['Aqua','Fluorescent Pink','Federal Blue']},
    start:{x:30,y:131,vx:160},goal:{x:720,y:227,r:26},
@@ -108,7 +115,7 @@ export const LEVELS=[
      [{type:'line',pts:[[430,302],[480,300],[540,270]]}],
      [{type:'line',pts:[[596,259],[641,261]]}],
      [{type:'line',pts:[[394,296],[424,287]]}]]},
-  {id:'crumble',name:'Crumble (prototype)',prototype:true,curve:'rise',tools:['line','rope'],ink:200,par:[110,200],
+  {id:'crumble',name:'Crumble',curve:'rise',tools:['line','rope'],ink:200,par:[110,200],
    hint:'Cracked blocks drop soon after you touch them, so keep moving and jump the break.',
    bg:{scene:'woodblock',seed:13,inks:['Flat Gold','Bright Red','Medium Blue']},
    start:{x:30,y:151,vx:160},goal:{x:720,y:237,r:26},
@@ -122,6 +129,11 @@ export const LEVELS=[
      [{type:'line',pts:[[219,256],[277,321]]}],
      [{type:'rope',a:[171,157],b:[217,179]}]]},
 ];
+
+// Chapters, in play order. `from` is the index of the chapter's first level in LEVELS.
+const PARTS=[['Basics',TUTORIAL],['Ground Rules',ch2],['Weather',ch3],['Slingshot',ch4],['Overprint',ch5],['Full Bleed',ch6]];
+export const LEVELS=PARTS.flatMap(([,ls])=>ls);
+export const CHAPTERS=[];{let from=0;PARTS.forEach(([name,ls],i)=>{if(ls.length)CHAPTERS.push({n:i+1,name,from,count:ls.length});from+=ls.length;});}
 
 // Dev-only test levels, one per round-A mechanic, for renderers to test against. Not in the game.
 // Each one wins with an empty drawing (solutions:[[]]), so pressing Ride shows the mechanic at once.

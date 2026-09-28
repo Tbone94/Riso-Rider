@@ -30,7 +30,7 @@ Mock in `fpv.html`. You build in side view, then Ride switches to a first-person
 - Levels scale on two separate axes, puzzle (planning) and ride (execution), in a sawtooth curve: it rises within a chapter and dips when a new tool is introduced. Never spike both axes on the same level.
 - Help comes from forgiveness and feed speed (assist). Mastery comes from 3★ ink par and optional challenges.
 - Difficulty is measured by the simulator (solution density, clumsy-bot ride win rate, ink tightness) in `tools/validate.mjs`.
-- **Scope:** 7 levels for now. Expand to full chapters (about 8 levels per tool) only after the user has play-tested and approved this build.
+- **Scope:** 10 tutorial levels plus 5 chapters of 8 (levels 11–50), planned in LEVELS.md (2026-09-28).
 
 ## Look: risograph (chosen 2026-09-27)
 `styles.html` holds the original five style studies. We chose risograph.

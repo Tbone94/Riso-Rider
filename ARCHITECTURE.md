@@ -371,3 +371,28 @@ User feedback: the gravity well "still doesn't feel right", with invisible rules
     - A sling learnability check: slings on the fall path, aimed at the goal. It fails under 60% on sling-only levels and is reported on mixed levels.
     - A best-aim smoothness map.
     - The random sampler understands slings.
+
+---
+# Contract v5: chapters and level authoring (2026-09-28)
+Levels 1–10 are the tutorial. **Levels 11–50 come in five chapters of eight.** The design plan (research, physics cheat sheet, per-level rules and the level-by-level table) is in `LEVELS.md`.
+
+## Files
+| File | What it is |
+|---|---|
+| `src/levels.js` | Holds the tutorial levels and concatenates the chapters. It exports `LEVELS` (all of them, in play order), `CHAPTERS` (`[{n, name, from, count}]`, where `from` is the index of the chapter's first level) and `DEV_LEVELS`. |
+| `src/levels/ch2.js` … `ch6.js` | One chapter each, as `export default [levels…]`. Chapters: 2 Ground Rules (line and rope), 3 Weather (wind, ice, boost), 4 Slingshot (sling, crumble), 5 Overprint (tool pairs), 6 Full Bleed (all tools). |
+| `tools/tune.mjs` | Authoring helper. From a level's geometry, ink and solutions, it derives the pars (3★ comes from the cheapest *rideable* win: listed solutions plus a parallel random search) and places 2–5 ink drops that pass validate's balance rules. With `--write` it rewrites `par`/`drops` in the chapter file. |
+| `tools/peek.mjs` | Draws a level as a PNG (python3 + Pillow): the geometry, a grid, and every solution's ride path under the autopilot. `--items '<json>'` rides a trial drawing. |
+
+## Tool changes
+- **`tools/validate.mjs`:**
+  - `--file <chapter module>` checks just that file. Only then does validate skip `src/levels.js`, so a broken chapter elsewhere can't break the run.
+  - `checkLevel`, `dropBalance` and `slingCheck` are exported.
+  - New fail **(d)**: a listed solution may not place a sling within 80 of the goal (the editor refuses those), or use a tool the level doesn't offer.
+  - The random sampler respects the same sling keep-out.
+- **The tutorial's "(prototype)" labels are gone.** Levels 8–10 are now just Boost, Black ice and Crumble.
+
+## App
+- **Level board:** it shows a chapter tab (`.chap`, "CH 2 · Ground Rules") before each chapter's first level.
+- **Unlocking:** clearing a level unlocks the next **two**, so one hard level never blocks progress.
+- **`sw.js`:** it caches the chapter files, and the cache is now `riso-rider-v4`.

@@ -2,7 +2,7 @@
 // edit → ride → (win | back to edit) state machine, input, settings, assist and UI.
 // Contract: ARCHITECTURE.md. Look and wording: UI.md ("the print shop").
 import * as P from './physics.js';
-import {LEVELS} from './levels.js';
+import {LEVELS,CHAPTERS} from './levels.js';
 
 const {W,H,DT}=P;
 const TAU=Math.PI*2;
@@ -173,19 +173,23 @@ function printThumb(L){const w=148,h=92,s=w/W;
   x.strokeStyle=hex(L.bg.inks[2]);x.lineWidth=9;x.beginPath();x.arc(L.goal.x,L.goal.y,L.goal.r,0,TAU);x.stroke();
   x.fillStyle=hex(L.bg.inks[1]);x.beginPath();x.arc(L.start.x,L.start.y,14,0,TAU);x.fill();
   return c;}
-const unlocked=i=>allJobs||i===0||i===S.li||!!progress[LEVELS[i].id]||!!progress[LEVELS[i-1].id];
+// Clearing a level opens the next two, so one hard level never blocks the way on.
+const unlocked=i=>allJobs||i===0||i===S.li||!!progress[LEVELS[i].id]||!!progress[LEVELS[i-1].id]||(i>1&&!!progress[LEVELS[i-2].id]);
+const lockedMsg=i=>`Level ${pad2(i+1)} is locked. Clear level ${pad2(i)}${i>1?` or ${pad2(i-1)}`:''} first.`;
 const starSvg=n=>Array.from({length:n},()=>'<svg viewBox="0 0 24 24"><use href="#star"/></svg>').join('');
 function renderJobs(){const box=$('#jobs');box.innerHTML='';LEVELS.forEach((L,i)=>{
+  const ch=CHAPTERS.find(c=>c.from===i);   // a chapter tab before each chapter's first level
+  if(ch){const t=document.createElement('div');t.className='chap';t.innerHTML=`<span>CH ${ch.n}</span><span class="cname">${esc(ch.name)}</span>`;box.append(t);}
   const b=document.createElement('button'),st=progress[L.id]||0,open=unlocked(i),t=thumbs.get(L.id);
   b.className='job paper'+(i===S.li?' on':'')+(open?'':' locked');tilt(b,'job:'+L.id);
-  b.title=open?`Level ${pad2(i+1)} · ${L.name}`:`Level ${pad2(i+1)} · locked: clear level ${pad2(i)} first`;
+  b.title=open?`Level ${pad2(i+1)} · ${L.name}`:lockedMsg(i);
   b.setAttribute('aria-label',open?`Level ${i+1}, ${L.name}, ${st} of 3 stars`:`Level ${i+1}, locked`);
   if(!open)b.setAttribute('aria-disabled','true');
   b.innerHTML=`<svg class="clip"><use href="#clip"/></svg>${open&&t?'':`<span class="blank">${pad2(i+1)}</span>`}
     <span class="jn"><span>${pad2(i+1)}</span><span class="st">${starSvg(st)}</span></span><span class="inks">${open?esc(L.name):'locked'}</span>`;
   if(open&&t){const c=canvas(t.width,t.height);c.getContext('2d').drawImage(t,0,0);b.querySelector('.clip').after(c);}
   b.dataset.snd=open?'press':'locked';
-  b.onclick=()=>{if(!open){toast(`Level ${pad2(i+1)} is locked. Clear level ${pad2(i)} first.`);return;}if(i!==S.li)load(i);};
+  b.onclick=()=>{if(!open){toast(lockedMsg(i));return;}if(i!==S.li)load(i);};
   box.append(b);});
   const on=box.querySelector('.job.on'),bd=$('#board');
   if(on&&(on.offsetLeft<bd.scrollLeft||on.offsetLeft+on.offsetWidth>bd.scrollLeft+bd.clientWidth))bd.scrollLeft=on.offsetLeft-bd.clientWidth/2+on.offsetWidth/2;}

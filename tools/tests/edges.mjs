@@ -140,5 +140,18 @@ for(const [label,a,floor] of [['straight down',Math.PI/2,true],['straight up',-M
   while(w.t<1&&w.status==="run"){P.step(w,L,P.autopilot(w,L));if(w.rider.sling>=0){const i=P.autopilot(w,L,{drops:true});if(i.steer||i.jump||i.push)bad++;}}
   ok('autopilot idle while orbiting',bad===0,'');}
 
+
+// Contacts never launch: a line wedged against a ledge under the rider used to fire it off at ~2200/s.
+{const L=base({start:{x:30,y:271,vx:150},blocks:[[[0,280],[90,280],[90,302],[0,302]]],hazards:[[[0,486],[800,486]]]});
+  const {maxV,allFinite}=ride(L,[{type:'line',pts:[[22,274],[106,257]]}],none,3);
+  ok('a wedged line does not launch the rider',allFinite&&maxV<Math.sqrt(150*150+2*P.G*(P.H+60-261))+40,`maxV=${maxV.toFixed(0)}`);}
+
+
+
+// A sling tucked against a ledge must not release the rider inside the rock (it used to stall there until timeout).
+{const L=base({start:{x:30,y:151,vx:150},blocks:[[[0,160],[130,160],[130,182],[0,182]]],hazards:[[[0,486],[800,486]]]});
+  const {w}=ride(L,[{type:'sling',x:140,y:190,a:-0.63}],none,8);
+  ok('sling against a ledge releases into open air',w.status!=='run'&&w.t<6&&w.events.some(e=>e.type==='slingOut'),`status=${w.status} t=${w.t.toFixed(1)}`);}
+
 console.log(bad?`\n${bad} edge case(s) failed`:'\nall edge cases pass');
 process.exit(bad?1:0);
