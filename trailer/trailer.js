@@ -4,8 +4,13 @@
 //   #sheet          render everything, upload a contact sheet (one thumbnail every 0.5 s)
 //   #frames=a,b,c   upload full frames at those times (seconds)
 //   #render         encode the MP4 (H.264 1080p60 + AAC) and upload it
+//   #look=id,sol,t… audition a level: its solved sheet plus ride frames at those ride times
+//   #probe=id,sol,t… ride frames only
+//   add &fp to any of them for the first-person camera; the default is the game's Chase camera (the ball visible)
+// Run: python3 tools/serve.py 5173 (or the "static" launch config) and python3 trailer/receiver.py trailer/out,
+// then open http://localhost:5173/trailer/index.html#render in a Chromium with WebCodecs H.264 (the Claude app's browser works).
 import * as P from '../src/physics.js';
-import {LEVELS} from '../src/levels.js';
+import {LEVELS,CHAPTERS} from '../src/levels.js';
 import {createSide} from '../src/side.js';
 import {createRide} from '../src/ride.js';
 import {createAudio} from '../src/audio.js';
@@ -36,6 +41,8 @@ const sideBuf=cv(GW,GH),sbx=sideBuf.getContext('2d');
 const lay=cv(FW,FH),lx=lay.getContext('2d');          // caption layer (stamped, then multiplied)
 const view=$('#view'),vx=view.getContext('2d');
 let DRY=false;                                        // physics + sound only, no pixels
+const CHASE=!/[&,]fp/.test(location.hash);             // the game's chase camera (the ball visible on the road); #…&fp = first person
+const HASH=location.hash.replace(/[&,]fp/,'');
 
 // the game's speckle: random pixels knocked out of the plate
 const speck=(()=>{const c=cv(GW,GH),x=c.getContext('2d'),id=x.createImageData(GW,GH),d=id.data,r=rng(7);
@@ -51,12 +58,20 @@ const desk=(()=>{const c=cv(FW,FH),x=c.getContext('2d'),r=rng(11);x.fillStyle=PA
 // ---------- printing (once per level) ----------
 const prints=new Map();
 const tick=()=>new Promise(r=>setTimeout(r,0));
-async function printLevel(L){if(prints.has(L.id))return;status(`printing ${L.name}…`);await tick();
-  const img=Riso.printSideBackdrop(L.bg,1600,1000),side=cv(1600,1000);side.getContext('2d').putImageData(img,0,0);
-  const ride=createRide().printBackdrop(L,1600,1000);prints.set(L.id,{side,ride});}
+// Hero levels (ridden or shown big) get full-size side and ride prints; the rest only appear small in the
+// fifty-sheet deal, so they get a smaller side print and no ride print (printing all 50 at full size takes ~10 min).
+function printNow(L,hero=true){const had=prints.get(L.id);if(had&&(had.ride||!hero))return had;
+  const w=hero?1600:1100,h=w*10/16,img=Riso.printSideBackdrop(L.bg,w,h),side=cv(w,h);side.getContext('2d').putImageData(img,0,0);
+  const pr={side,ride:hero?createRide().printBackdrop(L,1600,1000):null};prints.set(L.id,pr);return pr;}
+// Printed on first use, so a spot check of a few frames only prints the levels it shows.
+const HERO=new Set(['orrery','first-line','the-wall','canyon','bank-shot','chimney','keyhole','ski-jump','afterburner','cavern','crossroads','floor-gives-way','low-ceiling','last-proof']);
+const DEAL=Array.from({length:8},(_,j)=>Math.round(j*(LEVELS.length-1)/7));   // the sheets dealt onto the desk (level indexes)
+const printOf=(L,ride=false)=>printNow(L,ride||HERO.has(L.id));
+async function printLevel(L,hero=true){if(prints.has(L.id))return;status(`printing ${L.name}…`);await tick();printNow(L,hero);}
 
 // ---------- the sound log: every game sound, stamped with trailer time ----------
 let T=0;                                    // trailer time of the frame being made
+const STAMPED=new Set();                    // captions already given their stamp sound
 const LOG=[];
 const sfx=(name,...args)=>LOG.push({t:T,name,args});
 let RID=0;
@@ -71,7 +86,7 @@ function pats(ink){const dot=(color,step,rad)=>{const c=cv(step*2,step*2),x=c.ge
 class Shot{
   constructor(li,items=[]){const L=this.L=LEVELS[li];this.li=li;const ink=inksOf(L);
     this.S={li,level:L,items:JSON.parse(JSON.stringify(items)),tool:L.tools[0],mode:'edit',stroke:null,ink,pat:pats(ink),ghost:null,falls:0,
-      settings:{fov:90,bob:false,chase:false,reducedMotion:false,assist:0}};
+      settings:{fov:90,bob:false,chase:CHASE,reducedMotion:false,assist:0}};
     this.side=createSide({canvas:cv(10,10),getState:()=>this.S,hooks:{}});
     this.ride=createRide();this.world=null;this.pen=null;}
   get ink(){return this.S.ink;}
@@ -85,8 +100,8 @@ class Shot{
   // run the ride forward to `sec` without sound; the camera is kept warm by drawing into the plate
   preroll(sec){const n=Math.round(sec*FPS);for(let i=0;i<n;i++){this.step(true);if(!DRY&&(n-i)<=40){plate();this.ride.draw(g,this.world,this.L,this.S,i*DTF,DTF);}}
     if(!DRY)this.ride.draw(g,this.world,this.L,this.S,n*DTF,DTF);}
-  sideBg(a=1){sx.globalAlpha=a;sx.drawImage(prints.get(this.L.id).side,0,0,GW,GH);sx.globalAlpha=1;}
-  rideBg(b,a=1){const pr=prints.get(this.L.id).ride;sx.save();sx.globalAlpha=a;
+  sideBg(a=1){sx.globalAlpha=a;sx.drawImage(printOf(this.L).side,0,0,GW,GH);sx.globalAlpha=1;}
+  rideBg(b,a=1){const pr=printOf(this.L,true).ride;sx.save();sx.globalAlpha=a;
     sx.translate(GW/2+(b&&+b.x||0)*PX,GH/2+(b&&+b.y||0)*PX);sx.scale(b&&+b.scale||1,b&&+b.scale||1);if(b&&b.rot)sx.rotate(b.rot*Math.PI/180);
     sx.drawImage(pr,-GW/2,-GH/2,GW,GH);sx.restore();}
   drawSide(t){if(DRY)return;plate();try{this.side.draw(g,t);}catch(e){console.error(e);}
@@ -94,10 +109,14 @@ class Shot{
     sx.fillStyle=PAPER;sx.fillRect(0,0,GW,GH);this.sideBg();multiplyPlate();}
   drawRide(t,dt=DTF){if(DRY)return;plate();const o=this.ride.draw(g,this.world,this.L,this.S,t,dt)||{};finishPlate();
     sx.fillStyle=PAPER;sx.fillRect(0,0,GW,GH);this.rideBg(o.bg);multiplyPlate();}
-  drawSwoop(t,p){sfx('transition',p);if(DRY)return;plate();
+  // the side view with the ride in progress on it: a dotted ink trail and the rider where it is now
+  drawSideLive(t){if(DRY)return;plate();this.liveSide(g,t);finishPlate();sx.fillStyle=PAPER;sx.fillRect(0,0,GW,GH);this.sideBg();multiplyPlate();}
+  liveSide(c,t){const S=this.S,L=S.level;S.level={...L,start:{...L.start,x:-900,y:-900}};   // hide the parked rider at the start
+    try{this.side.draw(c,t);}catch(e){console.error(e);}S.level=L;if(this.world)liveRider(c,this.world,this.ink);}
+  drawSwoop(t,p,live=false){sfx('transition',p);if(DRY)return;plate();
     const o=this.ride.drawTransition(g,this.world,this.L,this.S,t,p)||{};
     const sa=clamp(o.sideAlpha!=null?+o.sideAlpha:1-p,0,1),ra=clamp(o.rideBgAlpha!=null?+o.rideBgAlpha:p,0,1);
-    if(sa>.004){sbx.setTransform(1,0,0,1,0,0);sbx.clearRect(0,0,GW,GH);sbx.setTransform(PX,0,0,PX,0,0);try{this.side.draw(sbx,t);}catch(e){console.error(e);}
+    if(sa>.004){sbx.setTransform(1,0,0,1,0,0);sbx.clearRect(0,0,GW,GH);sbx.setTransform(PX,0,0,PX,0,0);if(live)this.liveSide(sbx,t);else try{this.side.draw(sbx,t);}catch(e){console.error(e);}
       g.save();g.setTransform(1,0,0,1,0,0);g.globalAlpha=sa;g.drawImage(sideBuf,0,0);g.restore();}
     finishPlate();sx.fillStyle=PAPER;sx.fillRect(0,0,GW,GH);this.sideBg(1-ra);this.rideBg(o.bg,ra);multiplyPlate();}
 }
@@ -105,6 +124,11 @@ function plate(){g.setTransform(1,0,0,1,0,0);g.globalAlpha=1;g.globalCompositeOp
 function finishPlate(){g.setTransform(1,0,0,1,0,0);g.globalAlpha=1;g.globalCompositeOperation='destination-out';g.drawImage(speck,0,0);g.globalCompositeOperation='source-over';}
 function multiplyPlate(){sx.globalCompositeOperation='multiply';sx.drawImage(fg,0,0);sx.globalCompositeOperation='source-over';}
 
+// The ride so far on the side view (design units): a dotted mid-ink trail and the rider as the sheet prints it.
+function liveRider(c,w,ink){const PT=w.path,r=w.rider;c.save();c.lineCap='round';c.lineJoin='round';
+  if(PT.length>1){c.strokeStyle=ink.mid;c.lineWidth=2.6;c.setLineDash([1,6]);c.beginPath();PT.forEach((q,i)=>c[i?'lineTo':'moveTo'](q[0],q[1]));c.lineTo(r.x,r.y);c.stroke();c.setLineDash([]);}
+  c.fillStyle=ink.mid;c.beginPath();c.arc(r.x,r.y,P.R,0,TAU);c.fill();c.strokeStyle=ink.key;c.lineWidth=2;c.beginPath();c.arc(r.x+1.4,r.y-1,P.R,0,TAU);c.stroke();
+  c.fillStyle=ink.key;c.beginPath();c.arc(r.x+Math.cos(r.a-.5)*4.5,r.y+Math.sin(r.a-.5)*4.5,1.8,0,TAU);c.fill();c.restore();}
 // A pencil in the key ink, its nib on the pen point (design units).
 function pencil(c,[x,y],ink){c.save();c.translate(x,y);c.rotate(-.62);c.lineJoin='round';
   c.fillStyle=ink.mid;c.beginPath();c.moveTo(1.5,-1);c.lineTo(15,-6);c.lineTo(62,-6);c.lineTo(62,6);c.lineTo(15,6);c.closePath();c.fill();
@@ -118,7 +142,9 @@ function dens(pts,step=4){const o=[pts[0]];for(let i=1;i<pts.length;i++){const a
 // plan: [{item,t0,t1}] — each item is drawn between t0 and t1 (a well is dropped at t0)
 function drawPlan(shot,plan,lt){const S=shot.S;shot.pen=null;
   for(const st of plan){const it=st.item;st.state=st.state||0;
-    if(it.type==='well'){if(st.state===0&&lt>=st.t0){st.state=2;S.items.push(JSON.parse(JSON.stringify(it)));sfx('draw','well','start',0);}
+    if(it.type==='well'||it.type==='sling'){   // dropped at t0; a sling then swings round to its aim over 0.3 s
+      if(st.state===0&&lt>=st.t0){st.state=1;S.tool=it.type;S.items.push(JSON.parse(JSON.stringify(it)));st.idx=S.items.length-1;sfx('draw',it.type,'start',0);}
+      if(st.state===1&&it.type==='sling'){const k=easeOut(clamp((lt-st.t0)/.3,0,1));S.items[st.idx].a=it.a+(1-k)*-1.4;if(k>=1)st.state=2;}else if(st.state===1)st.state=2;
       if(lt>=st.t0-.25&&lt<st.t0+.12)shot.pen=[it.x,it.y-(lt<st.t0?(st.t0-lt)*60:0)];continue;}
     if(st.state===2||lt<st.t0)continue;
     const k=ease(clamp((lt-st.t0)/(st.t1-st.t0),0,1));
@@ -131,7 +157,7 @@ function drawPlan(shot,plan,lt){const S=shot.S;shot.pen=null;
     if(k>=1){st.state=2;S.stroke=null;S.items.push(JSON.parse(JSON.stringify(it)));sfx('draw',it.type,'end',0);}}}
 
 // ---------- framing: the sheet on the desk ----------
-const SIDE={cx:1150,cy:560,s:.74,rot:0},FULL={cx:960,cy:540,s:1,rot:0};
+const SIDE={cx:1150,cy:560,s:.74,rot:0},FULL={cx:960,cy:480,s:1,rot:0};
 const mixLay=(a,b,k)=>({cx:lerp(a.cx,b.cx,k),cy:lerp(a.cy,b.cy,k),s:lerp(a.s,b.s,k),rot:lerp(a.rot||0,b.rot||0,k)});
 function place(src,L,{marks=true,alpha=1}={}){ox.save();ox.globalAlpha=alpha;ox.translate(L.cx,L.cy);ox.rotate(L.rot||0);ox.scale(L.s,L.s);
   ox.drawImage(src,-GW/2,-GH/2);ox.restore();
@@ -159,7 +185,8 @@ function sheetFurniture(shot,alpha=1){if(alpha<=0)return;const L=shot.L,ink=shot
 
 // ---------- captions: stamped in stencil, typed in mono ----------
 // age: seconds since it was stamped (<0 = not yet). The stamp lands with a 2-frame hold (bigger, darker).
-function stampText(text,x,y,o={}){const{size=130,ink=curInk,age=1,rot=0,align='left',maxW=0,frame=false,alpha=1,spacing=.03,off=.035,base='alphabetic',paperBack=0}=o;
+function stampText(text,x,y,o={}){const{size=130,ink=curInk,age=1,rot=0,align='left',maxW=0,frame=false,alpha=1,spacing=.03,off=.035,base='alphabetic',paperBack=0,solid=0}=o;
+  if(age>=0&&age<DTF*1.5&&size>=130&&!o.mute){const key=text+'@'+Math.round((T-age)*30);if(!STAMPED.has(key)){STAMPED.add(key);sfx('stamp',1);}}
   if(age<0||DRY)return;
   lx.setTransform(1,0,0,1,0,0);lx.globalCompositeOperation='source-over';lx.globalAlpha=1;lx.clearRect(0,0,FW,FH);
   let sz=size;lx.font=`900 ${sz}px ${STENCIL}`;lx.letterSpacing=`${sz*spacing}px`;
@@ -168,11 +195,14 @@ function stampText(text,x,y,o={}){const{size=130,ink=curInk,age=1,rot=0,align='l
   lx.textAlign=align;lx.textBaseline=base;
   const m=lx.measureText(text),w=m.width,asc=m.actualBoundingBoxAscent,des=m.actualBoundingBoxDescent;
   const bx=align==='center'?-w/2:align==='right'?-w:0;
-  if(frame||paperBack){const pad=sz*.2;
+  const pad=sz*.2;
+  if(frame||paperBack){
     if(paperBack){lx.fillStyle=PAPER;lx.globalAlpha=paperBack;lx.fillRect(bx-pad,-asc-pad,w+pad*2,asc+des+pad*2);lx.globalAlpha=1;}
     if(frame){lx.strokeStyle=ink.key;lx.lineWidth=sz*.035;for(const e of[0,sz*.075])lx.strokeRect(bx-pad+e,-asc-pad+e,w+pad*2-2*e,asc+des+pad*2-2*e);}}
   lx.fillStyle=ink.mid;lx.fillText(text,sz*off,sz*off*.75);lx.fillStyle=ink.key;lx.fillText(text,0,0);
   lx.setTransform(1,0,0,1,0,0);lx.globalCompositeOperation='destination-out';lx.fillStyle=inkMask;lx.fillRect(0,0,FW,FH);lx.globalCompositeOperation='source-over';
+  if(solid){ox.save();ox.setTransform(1,0,0,1,0,0);ox.translate(x,y);ox.rotate(rot);if(down)ox.scale(1.05,1.05);ox.globalAlpha=alpha*solid;ox.fillStyle=PAPER;
+    ox.fillRect(bx-pad,-asc-pad,w+pad*2,asc+des+pad*2);ox.globalAlpha=alpha*solid*.55;ox.strokeStyle=ink.key;ox.lineWidth=2;ox.strokeRect(bx-pad,-asc-pad,w+pad*2,asc+des+pad*2);ox.restore();}
   ox.save();ox.setTransform(1,0,0,1,0,0);ox.globalAlpha=alpha;ox.globalCompositeOperation='multiply';if(down)ox.filter='brightness(.62) saturate(1.4)';ox.drawImage(lay,0,0);ox.restore();}
 function typeText(text,x,y,{size=34,color=curInk.key,progress=1,align='left',alpha=1,bg=0}={}){if(DRY||progress<=0)return;
   const s=text.slice(0,Math.ceil(text.length*clamp(progress,0,1)));ox.save();ox.globalAlpha=alpha;ox.font=`${size}px ${MONO}`;ox.textAlign=align;ox.textBaseline='alphabetic';
@@ -182,9 +212,10 @@ const typeP=(lt,t0,chars,cps=38)=>(lt-t0)*cps/Math.max(1,chars);
 
 // ---------- win stamp (the game's CLEARED! stamp) ----------
 function starPath(c,x,y,r){c.beginPath();for(let i=0;i<10;i++){const a=-Math.PI/2+i*Math.PI/5,rr=i%2?r*.45:r;c.lineTo(x+Math.cos(a)*rr,y+Math.sin(a)*rr);}c.closePath();}
-function cleared(lt,t0,stars,ink,cx=960,cy=470){if(lt<t0)return;const a=lt-t0;
-  stampText('CLEARED!',cx,cy,{size:230,ink,age:a,rot:-.12,align:'center',frame:true,paperBack:.55,spacing:.06,off:.04,base:'middle'});
-  for(let i=0;i<3;i++){const ta=a-.38-i*.3;if(ta<0)continue;const down=ta<2/FPS,x=cx-170+i*170,y=cy+215+[-8,6,-2][i],r=down?74:70;
+function cleared(lt,t0,stars,ink,cx=960,cy=440){if(lt<t0)return;const a=lt-t0;
+  if(!DRY){ox.save();ox.fillStyle=PAPER;ox.globalAlpha=.5;ox.fillRect(0,0,FW,FH);ox.restore();}
+  stampText('CLEARED!',cx,cy,{size:230,ink,age:a,rot:-.12,align:'center',frame:true,spacing:.06,off:.04,base:'middle',mute:true});
+  for(let i=0;i<3;i++){const ta=a-.38-i*.3;if(ta<0)continue;const down=ta<2/FPS,x=cx-190+i*190,y=cy+250+[-8,6,-2][i],r=down?74:70;
     ox.save();ox.translate(x,y);ox.rotate([-.14,.07,-.05][i]);if(down)ox.filter='brightness(.62)';ox.globalCompositeOperation='multiply';
     if(i<stars){ox.fillStyle=ink.mid;starPath(ox,0,0,r);ox.fill();ox.strokeStyle=ink.key;ox.lineWidth=5;starPath(ox,5,-4,r);ox.stroke();}
     else{ox.setLineDash([8,8]);ox.strokeStyle=ink.key;ox.lineWidth=4;starPath(ox,0,0,r);ox.stroke();}ox.restore();}}
@@ -210,100 +241,148 @@ function colourBar(ink,y=1036){const cyc=[ink.key,mulHex(ink.mid,ink.key),ink.mi
   for(const[x,yy]of[[60,60],[FW-60,60],[60,FH-60],[FW-60,FH-60]])regMark(x,yy,16,ink.key);}
 
 // =====================================================================================
-// The scenes. Times are local seconds; each scene starts on a beat (120 BPM, a beat = 0.5 s).
+// The scenes. Times are local seconds; every scene starts on a beat (120 BPM, a beat = 0.5 s).
 // =====================================================================================
 const SC=[];
 const scene=(name,dur,init,frame)=>SC.push({name,dur,init,frame});
 const L_=id=>LEVELS.findIndex(l=>l.id===id);
 const sol=(id,i=0)=>LEVELS[L_(id)].solutions[i];
+const AUTO=(w,L)=>P.autopilot(w,L,{drops:true});
+// When does something happen on a ride? (the first event matching `type`, or the ride's end)
+function eventT(id,items,type,policy=AUTO){const L=LEVELS[L_(id)],w=P.build(L,items);const pol=policy==='none'?()=>P.NO_INPUT:policy;
+  while(w.status==='run'&&w.t<20){P.step(w,L,pol(w,L));const e=type&&w.events.find(e=>e.type===type);if(e)return e.t;}return w.t;}
+const lvlTag=sh=>`level ${String(sh.li+1).padStart(2,'0')} · ${sh.L.name.toLowerCase()}`;
 
-// A "draw it, swoop, ride it" shot. opts: plan, swoopAt, swoopMs, policy, cap(lt, st) for captions.
+// A "draw it, swoop, ride it" shot. opts: plan, swoopAt, swoopMs, policy, rollInSwoop, cap(lt, st) for captions.
 function drawRideScene(name,dur,id,opts){scene(name,dur,()=>{const sh=new Shot(L_(id));
     return{sh,plan:opts.plan(sh).map(p=>({...p})),rideAt:opts.swoopAt+opts.swoopMs/1000,rode:false};},
   (lt,st)=>{const sh=st.sh;curInk=sh.ink;
     if(lt<opts.swoopAt){drawPlan(sh,st.plan,lt);sh.drawSide(T);deskBg();sheetFurniture(sh);place(scr,SIDE);}
     else if(lt<st.rideAt){if(!sh.world){drawPlan(sh,st.plan,1e9);sh.startRide(opts.policy||'auto');}
-      const p=clamp((lt-opts.swoopAt)/(opts.swoopMs/1000),0,1);sh.drawSwoop(T,p);deskBg();sheetFurniture(sh,1-clamp(p*3,0,1));place(scr,mixLay(SIDE,FULL,ease(p)));}
+      const p=clamp((lt-opts.swoopAt)/(opts.swoopMs/1000),0,1);if(opts.rollInSwoop&&p>.35)sh.step();sh.drawSwoop(T,p);deskBg();sheetFurniture(sh,1-clamp(p*3,0,1));place(scr,mixLay(SIDE,FULL,ease(p)));}
     else{if(!st.rode){st.rode=true;sfx('transition',1);}sh.step();sh.drawRide(T);deskBg();place(scr,FULL);}
     opts.cap&&opts.cap(lt,st);});}
 
-// 1 · COLD OPEN — draw a line, then ride it (0 – 6 s)
-drawRideScene('open',6,'first-line',{swoopAt:1.9,swoopMs:1100,
-  plan:()=>[{item:sol('first-line')[0],t0:.45,t1:1.6}],
-  cap:(lt,st)=>{
-    if(lt<2.3){const a=lt<1.9?1:1-(lt-1.9)/.4;stampText('DRAW',70,340,{size:190,age:lt-.1,rot:-.05,alpha:a});stampText('A LINE.',74,500,{size:150,maxW:330,age:lt-.35,rot:-.04,alpha:a});}
-    if(lt>=3.0){stampText('NOW',80,200,{size:130,age:lt-3.0,rot:-.06});stampText('RIDE IT.',84,370,{size:190,age:lt-3.25,rot:-.05});}}});
+// 1 · HOOK — straight into a ride, then the camera lifts out through the paper: it was a drawing all along. (0 – 5 s)
+const HOOK={id:'first-line',items:sol('first-line',0),from:.25,fp:1.5,back:1.5};
+scene('hook',5,()=>{const sh=new Shot(L_(HOOK.id),HOOK.items);sh.startRide('auto');sh.preroll(HOOK.from);return{sh};},(lt,st)=>{const sh=st.sh;curInk=sh.ink;
+  const b0=HOOK.fp,b1=HOOK.fp+HOOK.back;
+  if(lt<b0){sh.step();sh.drawRide(T);deskBg();place(scr,FULL);}
+  else if(lt<b1){const k=(lt-b0)/HOOK.back,p=1-ease(k);if(Math.round(lt*FPS)%2===0)sh.step();   // half-speed while the camera lifts off
+    sh.drawSwoop(T,p,true);deskBg();sheetFurniture(sh,clamp((.33-p)*3,0,1));place(scr,mixLay(SIDE,FULL,ease(p)));}
+  else{sh.step();sh.drawSideLive(T);deskBg();sheetFurniture(sh);place(scr,SIDE);}
+  if(lt>=b1+.25){const a=lt-b1-.25;stampText('YOU',70,330,{size:170,maxW:330,age:a,rot:-.05});stampText('DREW',74,490,{size:170,maxW:330,age:a-.3,rot:-.04});stampText('THAT.',74,650,{size:170,maxW:330,age:a-.6,rot:-.05});}});
 
-// 2 · TITLE — three plates stamp the wordmark (6 – 9 s)
-scene('title',3,()=>({sh:new Shot(L_('springy'))}),(lt,st)=>{const L=st.sh.L,ink=st.sh.ink;curInk=ink;
-  if(DRY){if(lt===0){sfx('stamp',0);}if(Math.abs(lt-.5)<1e-6)sfx('stamp',1);if(Math.abs(lt-1)<1e-6)sfx('stamp',2);return;}
-  deskBg();const s=1.28+lt*.03;ox.save();ox.globalAlpha=.55;ox.translate(FW/2,FH/2);ox.scale(s,s);ox.drawImage(prints.get(L.id).ride,-FW/2,-FW*5/16,FW,FW*10/16);ox.restore();
+// 2 · TITLE — three plates stamp the wordmark (6 – 10 s)
+scene('title',4,()=>({sh:new Shot(L_('orrery'))}),(lt,st)=>{const L=st.sh.L,ink=st.sh.ink;curInk=ink;
+  if(DRY)return;
+  deskBg();const s=1.28+lt*.03;ox.save();ox.globalAlpha=.55;ox.translate(FW/2,FH/2);ox.scale(s,s);ox.drawImage(printOf(L,true).ride,-FW/2,-FW*5/16,FW,FW*10/16);ox.restore();
   ox.fillStyle=PAPER;ox.globalAlpha=.35;ox.fillRect(0,0,FW,FH);ox.globalAlpha=1;colourBar(ink);
   const plates=[[ink.light,26,19,0],[ink.mid,13,9.5,.5],[ink.key,0,0,1]];
   for(const[col,dx,dy,t0]of plates){if(lt<t0)continue;const a=lt-t0,down=a<2/FPS;
     lx.setTransform(1,0,0,1,0,0);lx.clearRect(0,0,FW,FH);lx.font=`900 ${down?322:310}px ${STENCIL}`;lx.letterSpacing='14px';lx.textAlign='center';lx.textBaseline='middle';
     lx.fillStyle=col;lx.fillText('RISO RIDER',FW/2+dx,500+dy);lx.globalCompositeOperation='destination-out';lx.fillStyle=inkMask;lx.fillRect(0,0,FW,FH);lx.globalCompositeOperation='source-over';
     ox.save();ox.globalCompositeOperation='multiply';if(down)ox.filter='brightness(.7)';ox.drawImage(lay,0,down?4:0);ox.restore();}
-  typeText('Draw a track in 2D. Then ride it in first person.',FW/2,760,{size:48,progress:typeP(lt,1.45,49,60),align:'center',bg:.8});
-  typeText('a physics puzzle, printed like a risograph',FW/2,840,{size:34,color:ink.key,progress:typeP(lt,2.2,42,70),align:'center',alpha:.9,bg:.8});},true);
-// sound for the title plates, logged at the right beats
+  typeText('Draw a track on paper. Then ride it.',FW/2,760,{size:52,progress:typeP(lt,1.5,36,34),align:'center',bg:.8});
+  typeText('a physics puzzle, printed like a risograph',FW/2,840,{size:34,color:ink.key,progress:typeP(lt,2.7,42,60),align:'center',alpha:.9,bg:.8});});
 SC[SC.length-1].sounds=[[0,'stamp',0],[.5,'stamp',1],[1,'stamp',2]];
 
-// 3 · TOOLS — four tools, one level each (9 – 23 s)
-const toolCap=(big,small,y0=330)=>(lt,st)=>{const rideAt=st.rideAt;
-  if(lt<st.rideAt-.3){stampText(big,70,y0,{size:170,maxW:340,age:lt-.02,rot:-.05});typeText(small,76,y0+80,{size:40,progress:typeP(lt,.25,small.length,45)});}
-  else if(lt>=rideAt){stampText(big,70,210,{size:150,maxW:520,age:lt-rideAt,rot:-.05});typeText(small,78,285,{size:40,bg:.85});}};
-const QUICK=420;
-drawRideScene('lines',3.5,'tightrope',{swoopAt:.8,swoopMs:QUICK,plan:()=>[{item:sol('tightrope')[0],t0:.05,t1:.75}],cap:toolCap('LINES','become tightropes.')});
-drawRideScene('ropes',3.5,'springy',{swoopAt:.8,swoopMs:QUICK,plan:()=>[{item:sol('springy',2)[0],t0:.1,t1:.65}],cap:toolCap('ROPES','become trampolines.')});
-drawRideScene('wind',3.5,'updraft',{swoopAt:.8,swoopMs:QUICK,plan:()=>[{item:sol('updraft')[0],t0:.05,t1:.75}],cap:toolCap('WIND','carries you up.')});
-drawRideScene('wells',3.5,'pull',{swoopAt:.8,swoopMs:QUICK,plan:()=>[{item:sol('pull')[0],t0:.3},{item:sol('pull')[1],t0:.6}],cap:toolCap('WELLS','pull you in.')});
+// 3 · HOW — draw a kicker, the full swoop, ride it over the wall (10 – 16.5 s)
+drawRideScene('how',6.5,'the-wall',{swoopAt:1.9,swoopMs:1100,rollInSwoop:true,
+  plan:()=>[{item:sol('the-wall',1)[0],t0:.35,t1:1.65}],
+  cap:(lt,st)=>{
+    if(lt<2.3){const a=lt<1.9?1:1-(lt-1.9)/.4;stampText('DRAW',70,340,{size:190,maxW:340,age:lt-.1,rot:-.05,alpha:a});stampText('A TRACK.',74,500,{size:150,maxW:330,age:lt-.4,rot:-.04,alpha:a});}
+    if(lt>=st.rideAt+.1){stampText('THEN',80,200,{size:130,age:lt-st.rideAt-.1,rot:-.06,solid:.94});stampText('RIDE IT.',84,370,{size:190,age:lt-st.rideAt-.4,rot:-.05,solid:.94});}}});
 
-// 4 · INK — not enough ink to reach? jump the gap (23 – 27 s)
-drawRideScene('gap',4,'mind-the-gap',{swoopAt:.9,swoopMs:QUICK,plan:()=>[{item:sol('mind-the-gap')[0],t0:.15,t1:.8}],
-  cap:(lt,st)=>{if(lt<st.rideAt-.3){stampText('SHORT',70,330,{size:170,maxW:340,age:lt-.02,rot:-.05});stampText('ON INK?',74,480,{size:150,maxW:340,age:lt-.25,rot:-.04});}
-    const jt=st.rideAt+1.45;if(lt>=jt-.05){stampText('JUMP',80,230,{size:170,age:lt-jt+.05,rot:-.06});stampText('THE GAP.',84,390,{size:150,age:lt-jt-.2,rot:-.05});}}});
+// 4 · TOOLS — four tools: draw on the sheet, a short dive into the page, ride it (15 – 29 s)
+// The caption starts big on the desk and slides up into a paper label as the camera dives.
+const TS=.8;       // dive length (s)
+const toolCap=(big,small,at)=>(lt,st)=>{const k=ease(clamp((lt-at)/TS,0,1)),y=lerp(330,215,k),sz=lerp(170,150,k);
+  stampText(big,70,y,{size:sz,maxW:lerp(340,520,k),age:lt-.05,rot:-.05,solid:k*.94});
+  typeText(small,lerp(76,78,k),y+lerp(82,76,k),{size:lerp(33,40,k),progress:typeP(lt,.4,small.length,40),bg:k*.9});};
+const toolScene=(name,id,plan,at,cap)=>drawRideScene(name,3.5,id,{swoopAt:at,swoopMs:TS*1000,rollInSwoop:true,plan,cap:toolCap(cap[0],cap[1],at)});
+toolScene('lines','canyon',()=>[{item:sol('canyon')[0],t0:.1,t1:.75}],.9,['LINES','roll and slide.']);
+toolScene('ropes','bank-shot',()=>[{item:sol('bank-shot')[0],t0:.15,t1:.7}],.9,['ROPES','bounce you back.']);
+toolScene('wind','chimney',()=>[{item:sol('chimney',1)[0],t0:.1,t1:.75}],.9,['WIND','carries you up.']);
+toolScene('slings','keyhole',()=>[{item:sol('keyhole',1)[0],t0:.3}],.9,['SLINGS','fling you through.']);
 
-// 5 · FAILS — you will fall. a lot. (27 – 31 s)
+// 5 · THE PAGE FIGHTS BACK — ice, boosts, spikes, from behind the ball (30.5 – 38 s)
+const CLIPS=[
+  {id:'ski-jump',items:sol('ski-jump',0),at:()=>.3,word:'ICE.'},
+  {id:'afterburner',items:sol('afterburner',2),at:()=>0,word:'BOOSTS.'},
+  {id:'cavern',items:sol('cavern',1),at:()=>0,word:'SPIKES.'}];
+const CD=2.5;
+scene('elements',CLIPS.length*CD,()=>({clips:CLIPS.map(()=>null)}),(lt,st)=>{const k=Math.min(CLIPS.length-1,Math.floor(lt/CD)),a=lt-k*CD,C=CLIPS[k];
+  let c=st.clips[k];if(!c){const sh=new Shot(L_(C.id),C.items);sh.startRide('auto');sh.preroll(Math.max(0,C.at()));c=st.clips[k]={sh};}
+  const sh=c.sh;curInk=sh.ink;sh.step();sh.drawRide(T);deskBg();place(scr,FULL);
+  stampText(C.word,70,220,{size:170,maxW:600,age:a-.04,rot:-.05,solid:.94});
+  typeText(lvlTag(sh),78,305,{size:32,bg:.9,progress:typeP(a,.2,24,50)});});
+
+// 6 · ONE LEVEL, MANY ANSWERS — four sheets of the same level, four different drawings, all riding at once (38 – 46.5 s)
+const ANS={id:'crossroads',sols:[[0,'a line'],[3,'a sling'],[2,'a rope'],[1,'wind']],draw:2.6};
+const TILE=(i)=>({cx:[800,1525][i%2],cy:[292,790][Math.floor(i/2)],s:.36,rot:[-.008,.006,.005,-.006][i]});
+scene('answers',8.5,()=>({tiles:ANS.sols.map(([k,label],i)=>{const items=sol(ANS.id,k),sh=new Shot(L_(ANS.id));
+    const plan=items.map((it,j)=>({item:it,t0:.35+i*.5+j*.2,t1:.35+i*.5+j*.2+.9}));return{sh,items,plan,label,img:cv(GW,GH),winT:null};})}),
+  (lt,st)=>{if(!DRY)deskBg();
+    st.tiles.forEach((tl,i)=>{const sh=tl.sh;curInk=sh.ink;
+      if(lt<ANS.draw){drawPlan(sh,tl.plan,lt);sh.drawSide(T);}
+      else{if(!sh.world){drawPlan(sh,tl.plan,1e9);sh.startRide('auto');}sh.step(true);sh.drawSideLive(T);
+        if(tl.winT==null&&sh.world.status==='win'){tl.winT=lt;sfx('stamp',1);}}
+      if(DRY)return;tl.img.getContext('2d').drawImage(scr,0,0);const lay=TILE(i);place(tl.img,lay,{marks:false});
+      ox.save();ox.strokeStyle=sh.ink.key;ox.globalAlpha=.7;ox.lineWidth=2;ox.translate(lay.cx,lay.cy);ox.rotate(lay.rot);ox.strokeRect(-GW*lay.s/2,-GH*lay.s/2,GW*lay.s,GH*lay.s);ox.restore();
+      const used=Math.round(P.inkUsed(tl.items));
+      typeText(`${tl.label} · ${used} ink`,lay.cx-GW*lay.s/2+4,lay.cy+GH*lay.s/2+40,{size:30,progress:typeP(lt,.5+i*.5,16,40)});
+      if(tl.winT!=null){const a=lt-tl.winT,down=a<2/FPS;ox.save();ox.translate(lay.cx+GW*lay.s/2-48,lay.cy-GH*lay.s/2+54);ox.rotate(-.12);ox.globalCompositeOperation='multiply';if(down)ox.filter='brightness(.62)';
+        ox.fillStyle=sh.ink.mid;starPath(ox,0,0,down?40:38);ox.fill();ox.strokeStyle=sh.ink.key;ox.lineWidth=3;starPath(ox,3,-2,down?40:38);ox.stroke();ox.restore();}});
+    curInk=st.tiles[0].sh.ink;
+    stampText('ONE',70,330,{size:170,maxW:330,age:lt-.05,rot:-.05});stampText('LEVEL.',74,480,{size:150,maxW:330,age:lt-.3,rot:-.04});
+    if(lt>=3.2){stampText('MANY',74,700,{size:150,maxW:330,age:lt-3.2,rot:-.05});stampText('ANSWERS.',74,850,{size:130,maxW:330,age:lt-3.45,rot:-.04});}});
+
+// 7 · FAILS — you will fall. a lot. (46.5 – 54 s)
 const FAILS=[
-  {id:'tightrope',items:sol('tightrope'),policy:w=>({steer:w.t>.9?1:0,jump:false,jumpHeld:false,push:0}),at:1.88,why:['Fell off the tightrope.','fall']},
-  {id:'crumble',items:sol('crumble'),policy:'none',at:2.63,why:['Popped!','pop']},
-  {id:'mind-the-gap',items:sol('mind-the-gap'),policy:'none',at:2.22,why:['Popped!','pop']},
-  {id:'first-line',items:sol('first-line',1),policy:'none',at:2.32,why:['Fell off the edge.','fall']}];
-FAILS.forEach((F,i)=>scene('fail'+i,1,()=>{const sh=new Shot(L_(F.id),F.items);sh.startRide(F.policy);sh.preroll(F.at-.7);return{sh};},(lt,st)=>{
-  const sh=st.sh;curInk=sh.ink;
-  if(lt<.72){sh.step();sh.drawRide(T);deskBg();place(scr,FULL);}
+  {id:'canyon',items:sol('canyon'),policy:w=>({steer:w.t>.7?1:0,jump:false,jumpHeld:false,push:0}),why:['Fell off the tightrope.','fall']},
+  {id:'floor-gives-way',items:[],policy:'none',why:['Popped!','pop']},
+  {id:'low-ceiling',items:sol('low-ceiling',2),policy:w=>({steer:0,jump:w.t>1.05&&w.t<1.1,jumpHeld:true,push:0}),why:['Popped!','pop']}];
+const FD=2.5,FX=1.15;      // each fail: its length, and how far into it the crash lands
+FAILS.forEach((F,i)=>scene('fail'+i,FD,()=>{const at=eventT(F.id,F.items,null,F.policy==='auto'?AUTO:F.policy);const sh=new Shot(L_(F.id),F.items);
+    const pre=Math.max(0,at-FX);sh.startRide(F.policy);sh.preroll(pre);return{sh,cut:at-pre+.3};},(lt,st)=>{
+  const sh=st.sh;curInk=sh.ink;const ride=lt<st.cut;
+  if(ride){sh.step();sh.drawRide(T);deskBg();place(scr,FULL);}
   else{if(!st.ghost){const w=sh.world;st.ghost=true;sh.S.mode='edit';sh.S.falls=i+1;sh.S.settings.reducedMotion=true;
       sh.S.ghost={path:w.path,events:w.events,status:w.status,at:[clamp(w.rider.x,0,P.W),clamp(w.rider.y,0,P.H)]};sfx('ui','slip');}
-    sh.drawSide(T);deskBg();sheetFurniture(sh);place(scr,SIDE);slip([F.why[0],'R ride again · E edit your drawing'],F.why[1],sh.ink,1150,116,clamp((lt-.72)/.1,0,1));}
-  const tot=i+lt;stampText('YOU WILL',70,lt<.72?200:560,{size:150,maxW:360,age:tot-.05,rot:-.05,paperBack:lt<.72?.5:0});
-  stampText('FALL.',70,lt<.72?360:720,{size:190,maxW:360,age:tot-.3,rot:-.04,paperBack:lt<.72?.5:0});
-  if(tot>=2){stampText('A LOT.',80,lt<.72?540:900,{size:170,maxW:360,age:tot-2,rot:.03,paperBack:lt<.72?.5:0});}
-  if(lt>=.72)typeText(`${i+1} ${i?'FALLS':'FALL'} · no waiting, ride again`,440,1060-6,{size:24,alpha:0});}));
+    sh.drawSide(T);deskBg();sheetFurniture(sh);place(scr,SIDE);slip([F.why[0],'R ride again · E edit your drawing'],F.why[1],sh.ink,1150,116,clamp((lt-st.cut)/.12,0,1));}
+  const tot=i*FD+lt,o=ride?{solid:.94}:{};
+  stampText('YOU WILL',70,ride?200:560,{size:150,maxW:360,age:tot-.05,rot:-.05,...o});
+  stampText('FALL.',70,ride?360:720,{size:190,maxW:360,age:tot-.3,rot:-.04,...o});
+  if(i===2){stampText('A LOT.',80,ride?540:900,{size:170,maxW:360,age:lt-.15,rot:.03,...o});}}));
 
-// 6 · INKS — ten levels, each printed in its own inks (31 – 33.5 s)
-scene('inks',2.5,()=>{const r=rng(42);return{sheets:LEVELS.map((L,i)=>{const items=L.solutions[0],sh=new Shot(i,items);
-    const res=P.simulate(L,items,{policy:'auto'}),w=res.world;sh.S.ghost={path:w.path,events:w.events,status:'win',at:[w.rider.x,w.rider.y]};sh.S.settings.reducedMotion=true;
-    return{sh,lay:{cx:1170+(r()-.5)*110,cy:565+(r()-.5)*60,s:.6,rot:(r()-.5)*.14},img:null};})};},
-  (lt,st)=>{const k=Math.min(9,Math.floor(lt/.25)),a=lt-k*.25;
-    if(a<1e-6)sfx('ui','next');
+// 8 · FIFTY SHEETS — every level is its own sheet, in its own inks; one lands on the desk every beat (53 – 58.5 s)
+scene('sheets',5.5,()=>{const r=rng(42);return{sheets:DEAL.map(i=>{const items=LEVELS[i].solutions[0],sh=new Shot(i,items);
+    const res=P.simulate(LEVELS[i],items,{policy:'auto'}),w=res.world;sh.S.ghost={path:w.path,events:w.events,status:'win',at:[w.rider.x,w.rider.y]};sh.S.settings.reducedMotion=true;
+    return{sh,lay:{cx:1240+(r()-.5)*130,cy:560+(r()-.5)*80,s:.6,rot:(r()-.5)*.18},img:null};})};},
+  (lt,st)=>{const n=DEAL.length,per=4/n,k=Math.min(n-1,Math.floor(lt/per)),a=lt-k*per;
+    if(a<DTF/2&&lt<4)sfx('ui','next');   // (a sheet every beat)
     if(DRY)return;deskBg();
-    for(let j=0;j<k;j++){const s=st.sheets[j];if(!s.img){s.img=cv(GW,GH);s.sh.drawSide(T);s.img.getContext('2d').drawImage(scr,0,0);}curInk=s.sh.ink;place(s.img,s.lay,{marks:false});}
-    const s=st.sheets[k];curInk=s.sh.ink;s.sh.drawSide(T);const drop=a<3/FPS?1.06-.02*Math.floor(a*FPS):1;place(scr,{...s.lay,s:s.lay.s*drop});
-    stampText(`${String(k+1).padStart(2,'0')}`,70,330,{size:230,age:a,rot:-.05});
-    stampText('LEVELS',74,470,{size:130,age:lt,rot:-.04});
-    typeText('each one printed',78,560,{size:38,progress:typeP(lt,.3,16,40)});typeText('in its own inks.',78,610,{size:38,progress:typeP(lt,.7,16,40)});});
+    const img=s=>{if(!s.img){s.img=cv(GW,GH);s.sh.drawSide(T);s.img.getContext('2d').drawImage(scr,0,0);}return s.img;};
+    for(let j=Math.max(0,k-7);j<k;j++){const s=st.sheets[j];curInk=s.sh.ink;place(img(s),s.lay,{marks:false});}
+    const s=st.sheets[k];curInk=s.sh.ink;
+    const drop=a<3/FPS?1.05-.017*Math.floor(a*FPS):1;place(img(s),{...s.lay,s:s.lay.s*drop});
+    const ch=[...CHAPTERS].reverse().find(c=>DEAL[k]>=c.from);
+    stampText(String(DEAL[k]+1).padStart(2,'0'),70,330,{size:230,age:a,rot:-.05});
+    stampText('LEVELS',74,470,{size:130,age:lt-.1,rot:-.04});
+    typeText('six chapters,',78,560,{size:34,progress:typeP(lt,.4,13,36)});typeText('each in its own inks.',78,606,{size:34,progress:typeP(lt,.95,21,36)});
+    typeText(`chapter ${ch.n} · ${ch.name.toLowerCase()} · ${s.sh.L.name.toLowerCase()}`,78,1040,{size:28,alpha:.9});});
 
-// 7 · FINALE — mix every tool, then CLEARED! (33.5 – 39.5 s)
-drawRideScene('finale',6,'grand-tour',{swoopAt:1.1,swoopMs:1100,
-  plan:()=>[{item:sol('grand-tour')[0],t0:.1,t1:.6},{item:sol('grand-tour')[1],t0:.85}],
-  cap:(lt,st)=>{if(lt<1.4){const a=lt<1.1?1:1-(lt-1.1)/.3;stampText('MIX',70,330,{size:190,age:lt-.02,rot:-.05,alpha:a});stampText('EVERY',74,480,{size:150,maxW:330,age:lt-.25,rot:-.04,alpha:a});stampText('TOOL.',74,630,{size:150,maxW:330,age:lt-.45,rot:-.05,alpha:a});}
+// 9 · FINALE — the last level: a rope, a sling, the swoop, and CLEARED! (59.5 – 68.5 s)
+drawRideScene('finale',9,'last-proof',{swoopAt:1.25,swoopMs:1100,
+  plan:()=>[{item:sol('last-proof',1)[0],t0:.1,t1:.6},{item:sol('last-proof',1)[1],t0:.85}],
+  cap:(lt,st)=>{if(lt<1.6){const a=lt<1.25?1:1-(lt-1.25)/.35;stampText('THEN',70,330,{size:170,maxW:330,age:lt-.02,rot:-.05,alpha:a});stampText('MIX',74,490,{size:170,maxW:330,age:lt-.25,rot:-.04,alpha:a});stampText('THEM.',74,650,{size:170,maxW:330,age:lt-.45,rot:-.05,alpha:a});}
     const w=st.sh.world;if(w&&w.status==='win'){if(st.winT==null){st.winT=lt;st.stars=P.stars(st.sh.L,P.inkUsed(st.sh.S.items),w.refund||0);}
       const t0=st.winT+.18;if(Math.abs(lt-t0)<DTF/2)sfx('stamp',0);for(let i=0;i<st.stars;i++)if(Math.abs(lt-(t0+.38+i*.3))<DTF/2)sfx('stamp',i+1);
       cleared(lt,t0,st.stars,st.sh.ink);}}});
 
-// 8 · END CARD (39.5 – 44.5 s)
-scene('end',5,()=>({ink:inksOf(LEVELS[L_('mind-the-gap')])}),(lt,st)=>{const ink=st.ink;curInk=ink;
+// 10 · END CARD (68.5 – 74.5 s)
+scene('end',6,()=>({ink:inksOf(LEVELS[L_('the-wall')])}),(lt,st)=>{const ink=st.ink;curInk=ink;
   const line=[[470,560],[760,548],[1060,572],[1330,556]],d=dens(line,3),dk=clamp((lt-.35)/.6,0,1),n=Math.floor(dk*(d.length-1));
   if(Math.abs(lt-.35)<DTF/2)sfx('draw','line','start',0);if(lt>.35&&lt<.95)sfx('draw','line','move',1400);if(Math.abs(lt-.95)<DTF/2)sfx('draw','line','end',0);
   const rideK=clamp((lt-1.05)/1.25,0,1),ri=Math.floor(ease(rideK)*(d.length-1)),bp=d[Math.min(d.length-1,ri)],goal=[1420,516];
@@ -313,13 +392,12 @@ scene('end',5,()=>({ink:inksOf(LEVELS[L_('mind-the-gap')])}),(lt,st)=>{const ink
   ox.save();ox.lineCap='round';ox.lineJoin='round';ox.globalCompositeOperation='multiply';
   for(const[col,o]of[[ink.mid,4],[ink.key,0]]){ox.strokeStyle=col;ox.lineWidth=8;ox.beginPath();d.slice(0,n+1).forEach((p,i)=>ox[i?'lineTo':'moveTo'](p[0]+o,p[1]+o*.7));ox.stroke();}
   ox.strokeStyle=ink.key;ox.lineWidth=7;ox.beginPath();ox.arc(goal[0],goal[1],34,0,TAU);ox.stroke();ox.strokeStyle=ink.mid;ox.setLineDash([9,10]);ox.lineWidth=4;ox.beginPath();ox.arc(goal[0],goal[1],48,0,TAU);ox.stroke();ox.restore();
-  if(dk<1){const p=d[n];ox.save();ox.translate(0,0);ox.scale(1,1);pencilAt(p,ink);ox.restore();}
-  else{const past=lt>2.3,x=past?goal[0]+(lt-2.3)*260:bp[0],y=past?goal[1]+Math.pow(lt-2.3,2)*0:bp[1]-24;riderBall(x,past?goal[1]:y,22,ink,lt*9);}
+  if(dk<1){const p=d[n];pencilAt(p,ink);}
+  else{const past=lt>2.3,k=clamp((lt-2.3)/.25,0,1),x=past?lerp(d[d.length-1][0],goal[0],easeOut(k)):bp[0],y=past?lerp(d[d.length-1][1]-24,goal[1],easeOut(k)):bp[1]-24;riderBall(x,y,22,ink,past?2.3*9+k*3:lt*9);}
   stampText('DRAW IT. RIDE IT.',FW/2,720,{size:110,age:lt-1.3,align:'center',spacing:.05});
-  typeText('Free · plays in your browser · install it on your phone',FW/2,815,{size:38,progress:typeP(lt,1.9,54,70),align:'center'});
-  typeText('tbone94.github.io/Riso-Rider',FW/2,920,{size:56,progress:typeP(lt,2.7,28,40),align:'center'});
-  if(lt>2.7+.7){ox.fillStyle=ink.mid;ox.fillRect(FW/2-420,940,840,5);}
-  if(lt>4.4){ox.fillStyle=PAPER;ox.globalAlpha=0;ox.fillRect(0,0,FW,FH);ox.globalAlpha=1;}});
+  typeText('50 levels · free · plays in your browser · install it on your phone',FW/2,815,{size:38,progress:typeP(lt,1.9,66,80),align:'center'});
+  typeText('tbone94.github.io/Riso-Rider',FW/2,920,{size:56,progress:typeP(lt,2.8,28,40),align:'center'});
+  if(lt>2.8+.7){ox.fillStyle=ink.mid;ox.fillRect(FW/2-420,940,840,5);}});
 function pencilAt(p,ink){ox.save();ox.translate(p[0],p[1]);ox.scale(2.2,2.2);pencil(ox,[0,0],ink);ox.restore();}
 
 // scene start times
@@ -328,10 +406,11 @@ let TOTAL=0;SC.forEach(s=>{s.t0=TOTAL;TOTAL+=s.dur;});
 // =====================================================================================
 // Running the timeline
 // =====================================================================================
-async function prepare(){await document.fonts.load(`900 40px ${STENCIL}`);await document.fonts.load(`20px ${MONO}`);
-  for(const L of LEVELS)await printLevel(L);}
+async function prepare(full=true){await document.fonts.load(`900 40px ${STENCIL}`);await document.fonts.load(`20px ${MONO}`);if(!full)return;
+  for(const L of LEVELS)if(HERO.has(L.id))await printLevel(L,true);
+  for(const i of DEAL)await printLevel(LEVELS[i],false);}
 // Render every frame in order; onFrame(f, t) after each one is composed on `out`.
-async function run(onFrame,{from=0,to=TOTAL}={}){LOG.length=0;RID=0;
+async function run(onFrame,{from=0,to=TOTAL}={}){LOG.length=0;RID=0;STAMPED.clear();
   for(const s of SC){if(s.t0+s.dur<=from-1e-9&&!DRY)continue;const n=Math.round(s.dur*FPS);T=s.t0;const st=s.init();
     for(let f=0;f<n;f++){T=s.t0+f/FPS;if(T>=to)return;
       if(s.sounds)for(const[at,name,arg]of s.sounds)if(Math.abs(f/FPS-at)<DTF/2)sfx(name,arg);
@@ -342,8 +421,8 @@ async function run(onFrame,{from=0,to=TOTAL}={}){LOG.length=0;RID=0;
 const BEAT=.5,BAR=2;
 const CH=[[48,[60,64,67,72]],[45,[57,60,64,69]],[41,[57,60,65,69]],[43,[55,59,62,67]]];   // bass root, chord (MIDI)
 const mtof=m=>440*Math.pow(2,(m-69)/12);
-// sections in beats: what plays where
-const SECT=[[0,4,'intro'],[4,6,'roll'],[6,12,'full'],[12,16,'title'],[16,18,'rise'],[18,54,'full'],[54,62,'fails'],[62,67,'full'],[67,77,'full'],[77,79,'final'],[79,89,'end']];
+// Sections follow the cut: scene start times in beats.
+const tOf=name=>{const s=SC.find(x=>x.name===name);return s?s.t0:0;},bOf=name=>Math.round(tOf(name)/BEAT);
 function music(ac,dest){const noise=(()=>{const b=ac.createBuffer(1,ac.sampleRate*2,ac.sampleRate),d=b.getChannelData(0),r=rng(5);for(let i=0;i<d.length;i++)d[i]=r()*2-1;return b;})();
   const bus=ac.createGain();bus.gain.value=.5;const comp=ac.createDynamicsCompressor();comp.threshold.value=-14;comp.ratio.value=3;comp.attack.value=.005;comp.release.value=.15;
   bus.connect(comp);comp.connect(dest);
@@ -351,7 +430,7 @@ function music(ac,dest){const noise=(()=>{const b=ac.createBuffer(1,ac.sampleRat
   const room=ac.createConvolver();{const len=ac.sampleRate*1.2,ir=ac.createBuffer(2,len,ac.sampleRate),r=rng(9);for(let c=0;c<2;c++){const d=ir.getChannelData(c);for(let i=0;i<len;i++)d[i]=(r()*2-1)*Math.exp(-i/ac.sampleRate/.25);}room.buffer=ir;}
   const rs=ac.createGain();rs.gain.value=.22;tone.connect(rs);rs.connect(room);room.connect(bus);
   const env=(p,t,a,peak,d)=>{p.setValueAtTime(0,t);p.linearRampToValueAtTime(peak,t+a);p.exponentialRampToValueAtTime(.0005,t+a+d);};
-  const nz=(t,dur,type,f,q,peak,d,to=drums)=>{const s=ac.createBufferSource();s.buffer=noise;const fl=ac.createBiquadFilter();fl.type=type;fl.frequency.value=f;fl.Q.value=q;const gg=ac.createGain();env(gg.gain,t,.002,peak,d);s.connect(fl);fl.connect(gg);gg.connect(to);s.start(t,Math.random()*1.5);s.stop(t+dur);return{s,fl,gg};};
+  const nz=(t,dur,type,f,q,peak,d,to=drums)=>{const s=ac.createBufferSource();s.buffer=noise;const fl=ac.createBiquadFilter();fl.type=type;fl.frequency.value=f;fl.Q.value=q;const gg=ac.createGain();env(gg.gain,t,.002,peak,d);s.connect(fl);fl.connect(gg);gg.connect(to);s.start(t,(t*7.31)%1.5);s.stop(t+dur);return{s,fl,gg};};
   const kick=(t,v=1,muff=false)=>{const o=ac.createOscillator(),gg=ac.createGain();o.frequency.setValueAtTime(155,t);o.frequency.exponentialRampToValueAtTime(46,t+.13);env(gg.gain,t,.003,.95*v,.4);
     let n=gg;if(muff){const f=ac.createBiquadFilter();f.type='lowpass';f.frequency.value=180;gg.connect(f);n=f;}n.connect(drums);o.connect(gg);o.start(t);o.stop(t+.5);
     if(!muff)nz(t,.03,'bandpass',3000,1,.25*v,.012);};
@@ -369,12 +448,16 @@ function music(ac,dest){const noise=(()=>{const b=ac.createBuffer(1,ac.sampleRat
     o.connect(f);f.connect(gg);gg.connect(tone);o.start(t);o.stop(t+dur+.05);}};
   const riser=(t,dur,v=1)=>{const s=ac.createBufferSource();s.buffer=noise;s.loop=true;const f=ac.createBiquadFilter();f.type='bandpass';f.Q.value=1.4;f.frequency.setValueAtTime(300,t);f.frequency.exponentialRampToValueAtTime(4200,t+dur);
     const gg=ac.createGain();gg.gain.setValueAtTime(0,t);gg.gain.linearRampToValueAtTime(.22*v,t+dur);gg.gain.linearRampToValueAtTime(0,t+dur+.03);s.connect(f);f.connect(gg);gg.connect(drums);s.start(t);s.stop(t+dur+.05);};
-  const sect=b=>{for(const[a,e,n]of SECT)if(b>=a&&b<e)return n;return null;};
+  // the cut, in beats
+  const LIFT=Math.round(HOOK.fp/BEAT),TITLE=bOf('title'),HOW=bOf('how'),TOOLS=bOf('lines'),FAILS=bOf('fail0'),SHEETS=bOf('sheets'),END=bOf('end'),nb=Math.round(TOTAL/BEAT);
+  const sect=b=>b<LIFT?'hook':b<TITLE-2?'lift':b<TITLE?'roll':b<TITLE+4?'title':b<HOW?'rise':b<FAILS?'full':b<SHEETS?'fails':b<END?'full':'end';
   const melody=[[0,76],[1.5,79],[2,81],[3,79],[4,76],[5.5,74],[6,72],[7,74],[8,76],[9.5,79],[10,81],[11,84],[12,81],[13.5,79],[14,76],[15,74]];   // 4 bars, in beats
-  const nb=89;
   for(let b=0;b<nb;b++){const t=b*BEAT,s=sect(b),bar=Math.floor(b/4),ch=CH[bar%4],inBar=b%4;
-    if(s==='intro'){kick(t,.7,true);if(inBar===0)pad(t,ch[1],2,1);if(b>=2)hat(t+.25,.5);if(b===2)riser(t,1.0,.8);}
-    if(s==='roll'){kick(t,.8,true);for(let k=0;k<(b===4?2:4);k++)snare(t+k*(b===4?.25:.125),.25+.12*k+(b-4)*.2);}
+    // hook: a held chord, a muffled pulse and ticking hats under the ride; a riser into the lift-off
+    if(s==='hook'){kick(t,.75,true);if(b===0)pad(t,[48,55,60,64],LIFT*BEAT+.4,1.1);hat(t+.25,.45);if(b%2)shaker(t,.6);if(b===LIFT-2)riser(t,2*BEAT,1);}
+    // the camera lifts out of the page: the beat drops away, one bright chord rings
+    if(s==='lift'&&b===LIFT){piano(t,72,.8,2.2);piano(t,76,.65,2.2);piano(t,79,.6,2.2);piano(t,84,.45,2.2);pad(t,[53,57,60,65],(TITLE-2-LIFT)*BEAT+.3,1.2);}
+    if(s==='roll'){kick(t,.8,true);const k0=b===TITLE-2;for(let k=0;k<(k0?2:4);k++)snare(t+k*(k0?.25:.125),.25+.12*k+(k0?0:.2));}
     if(s==='full'||s==='fails'){
       const half=s==='fails';
       if(!half||inBar%2===0)kick(t,1);if(!half&&inBar===1)kick(t+.25,.55);
@@ -383,16 +466,19 @@ function music(ac,dest){const noise=(()=>{const b=ac.createBuffer(1,ac.sampleRat
       bass(t,ch[0],.2,1);bass(t+.25,ch[0]+12,.18,.7);
       piano(t+.25,ch[1][1],.55,.35);piano(t+.25,ch[1][2],.5,.35);piano(t+.25,ch[1][3],.45,.35);   // offbeat stabs
       if(inBar===0)pad(t,ch[1],2,.6);
-      if(b>=18&&b<54){const mb=(b-18)%16;for(const[at,m]of melody)if(Math.floor(at)===mb)piano(t+(at-mb)*BEAT,m+12,.9,1.4);}}
-    if(s==='title'){if(inBar===0&&b===12)pad(t,[53,57,60,65],4,1.2);if(b===12){kick(t,1.1);piano(t,41,1,2);piano(t,53,.8,2);}}
-    if(s==='rise'){if(b===16){pad(t,[55,59,62,67],1,1.2);riser(t,1,1);}snare(t,.35+(b-16)*.25);snare(t+.25,.4+(b-16)*.25);if(b===17)for(let k=0;k<4;k++)snare(t+k*.125,.5+k*.12);}
-    if(s==='final'){if(b===77){kick(t,1.1);snare(t,.8);}}
-    if(s==='end'){if(b===79){pad(t,[48,55,60,64,67],5,1.3);piano(t,48,.9,3);piano(t,60,.8,3);piano(t,64,.7,3);piano(t,67,.7,3);}
-      if(b>=80&&b<86){const arp=[72,76,79,84,79,76];piano(t,arp[b-80],.45,1);}}}
-  // the drop after the swoop, the title slam, the finale landing
-  for(const tt of[3.0,9.0])riser(tt-1.0,1.0,.5);
+      if(b>=TOOLS&&b<FAILS){const mb=(b-TOOLS)%16;for(const[at,m]of melody)if(Math.floor(at)===mb)piano(t+(at-mb)*BEAT,m+12,.9,1.4);}}
+    if(s==='title'){if(b===TITLE){pad(t,[53,57,60,65],4*BEAT,1.2);kick(t,1.1);piano(t,41,1,2);piano(t,53,.8,2);}}
+    if(s==='rise'){if(b===TITLE+4){pad(t,[55,59,62,67],1,1.2);riser(t,1,1);}snare(t,.35+(b-TITLE-4)*.25);snare(t+.25,.4+(b-TITLE-4)*.25);if(b===HOW-1)for(let k=0;k<4;k++)snare(t+k*.125,.5+k*.12);}
+    if(s==='end'){if(b===END){pad(t,[48,55,60,64,67],5,1.3);piano(t,48,.9,3);piano(t,60,.8,3);piano(t,64,.7,3);piano(t,67,.7,3);}
+      if(b>=END+1&&b<END+7){const arp=[72,76,79,84,79,76];piano(t,arp[b-END-1],.45,1);}}}
+  // the title slam gets a riser into it
+  riser(tOf('title')-1,1,.5);
   // fails: the music cuts out for each crash
-  const F0=54*BEAT;for(let i=0;i<4;i++){const tf=F0+i+.66,p=bus.gain;p.setValueAtTime(.5,tf);p.linearRampToValueAtTime(.04,tf+.05);p.setValueAtTime(.04,tf+.3);p.linearRampToValueAtTime(.5,tf+.34);}
+  const F0=tOf('fail0');for(const c of LOG){if(c.name!=='event'||!c.args[0]||!['fell','popped','stuck'].includes(c.args[0].type)||c.t<F0||c.t>=F0+3*FD)continue;
+    const tf=c.t,p=bus.gain;p.setValueAtTime(.5,tf);p.linearRampToValueAtTime(.04,tf+.05);p.setValueAtTime(.04,tf+.55);p.linearRampToValueAtTime(.5,tf+.62);}
+  // the finale's win lands on a big hit
+  const win=LOG.find(c=>c.name==='event'&&c.args[0]&&c.args[0].type==='win'&&c.t>=tOf('finale'));
+  if(win){kick(win.t,1.2);snare(win.t,.9);pad(win.t,[48,55,60,64,67],2.2,1.3);piano(win.t,84,.7,2);}
   // finish: fade the tail
   const end=TOTAL;bus.gain.setValueAtTime(.5,end-1.2);bus.gain.linearRampToValueAtTime(0,end-.05);
   return bus;}
@@ -456,12 +542,26 @@ async function renderMP4(){
   await venc.flush();muxer.finalize();
   const blob=new Blob([muxer.target.buffer],{type:'video/mp4'});status(`uploading ${(blob.size/1e6).toFixed(1)} MB…`);
   await upload('riso-rider-trailer.mp4',blob);status(`done: riso-rider-trailer.mp4 (${(blob.size/1e6).toFixed(1)} MB, ${TOTAL}s)`);window.RENDER_DONE=blob.size;}
+// Audition a ride: #probe=<level id>,<solution index>,t1,t2,… uploads first-person frames at those ride times.
+async function probe(arg){const[id,si,...ts]=arg.split(',');const sh=new Shot(L_(id),sol(id,+si));await printLevel(sh.L,true);sh.startRide('auto');let t=0;
+  for(const want of ts.map(Number)){sh.preroll(want-t);t=want;sh.drawRide(t);deskBg();place(scr,FULL);show();await upload(`probe-${id}-${want.toFixed(2)}${CHASE?'':'-fp'}.jpg`,await toBlob(out,'image/jpeg',.85));}
+  status('probe uploaded');}
+// Audition a level: #look=<level id>,<solution index>,t1,t2,… uploads the solved sheet and ride frames at those times.
+async function look(arg){const[id,si,...ts]=arg.split(',');const sh=new Shot(L_(id),sol(id,+si));await printLevel(sh.L,true);curInk=sh.ink;
+  sh.drawSide(0);deskBg();sheetFurniture(sh);place(scr,SIDE);show();await upload(`look-${id}-${si}-sheet.jpg`,await toBlob(out,'image/jpeg',.85));
+  sh.startRide('auto');let t=0;for(const want of ts.map(Number)){sh.preroll(want-t);t=want;sh.drawRide(t);deskBg();place(scr,FULL);show();await upload(`look-${id}-${si}-${want.toFixed(2)}.jpg`,await toBlob(out,'image/jpeg',.85));}
+  status('look uploaded');}
 async function preview(){await run(async(f,t)=>{show();status(`${t.toFixed(2)}s`);await raf();});}
 
-window.trailer={SC,run,contactSheet,frames,renderMP4,preview,renderAudio,get TOTAL(){return TOTAL;},LOG};
-await prepare();
-status(`ready · ${TOTAL}s · ${SC.length} scenes`);
+async function audioTest(){DRY=true;try{await run(async()=>{});}finally{DRY=false;}const b=await renderAudio();await upload('trailer-audio.wav',wav(b));
+  const d=b.getChannelData(0),win=b.sampleRate,rms=[];for(let i=0;i<d.length;i+=win){let q=0,m=0;for(let j=i;j<Math.min(d.length,i+win);j++){q+=d[j]*d[j];m=Math.max(m,Math.abs(d[j]));}rms.push((20*Math.log10(Math.sqrt(q/win)+1e-9)).toFixed(0)+'/'+(20*Math.log10(m+1e-9)).toFixed(0));}
+  return{log:LOG.length,names:[...new Set(LOG.map(c=>c.name))],rms:rms.join(' ')};}
+window.trailer={audioTest,SC,run,contactSheet,frames,renderMP4,preview,renderAudio,get TOTAL(){return TOTAL;},LOG};
+if(HASH.startsWith('#probe=')){await document.fonts.load(`900 40px ${STENCIL}`);await probe(decodeURIComponent(HASH.slice(7)));}
+else if(HASH.startsWith('#look=')){await document.fonts.load(`900 40px ${STENCIL}`);await document.fonts.load(`20px ${MONO}`);await look(decodeURIComponent(HASH.slice(6)));}
+else{await prepare(!HASH.startsWith('#frames='));
+status(`ready · ${TOTAL}s · ${SC.length} scenes`);}
 $('#bPlay').onclick=preview;$('#bSheet').onclick=()=>contactSheet();$('#bRender').onclick=renderMP4;
-const h=location.hash;
-try{if(h==='#sheet')await contactSheet();else if(h.startsWith('#frames='))await frames(h.slice(8).split(','));else if(h==='#render')await renderMP4();}
+const h=HASH;
+try{if(h.startsWith('#probe=')||h.startsWith('#look='));else if(h==='#sheet')await contactSheet();else if(h.startsWith('#frames='))await frames(h.slice(8).split(','));else if(h==='#render')await renderMP4();}
 catch(e){console.error(e);status('error: '+e.message);window.RENDER_ERR=String(e&&e.stack||e);}
