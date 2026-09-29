@@ -33,7 +33,7 @@ const allJobs=/[?&]jobs=all\b/.test(location.search);
 
 // ---------- state S (shape fixed by ARCHITECTURE.md) ----------
 function sanitize(o){o=o&&typeof o==='object'?o:{};return{
-  fov:clamp(Math.round(+o.fov||90),70,110),bob:!!o.bob,chase:!!o.chase,
+  fov:clamp(Math.round(+o.fov||90),70,110),bob:!!o.bob,chase:typeof o.chase==='boolean'?o.chase:true,
   reducedMotion:typeof o.reducedMotion==='boolean'?o.reducedMotion:reduceMQ.matches,
   assist:[0,1,2].includes(o.assist)?o.assist:0,
   sound:typeof o.sound==='boolean'?o.sound:true,volume:Number.isFinite(+o.volume)&&o.volume!==null&&o.volume!==''?clamp(+o.volume,0,1):.7};}

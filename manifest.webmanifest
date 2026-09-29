@@ -1,7 +1,7 @@
 {
   "name": "Riso Rider",
   "short_name": "Riso Rider",
-  "description": "Draw a track in 2D, then ride it in first person. A physics puzzle printed like a risograph.",
+  "description": "Draw a track in 2D, then ride it in 3D. A physics puzzle printed like a risograph.",
   "start_url": "./",
   "scope": "./",
   "display": "fullscreen",

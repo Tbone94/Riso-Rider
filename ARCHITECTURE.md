@@ -83,7 +83,7 @@ S = {
   pat: {light, lightDense, mid, key},  // CanvasPatterns of halftone dots in those inks (made by app)
   ghost: null | {path, events, status, at:[x,y]},   // last ride, for the editor
   falls: 0,                        // failed rides on this level (resets on load and on win)
-  settings: {fov:90, bob:false, chase:false, reducedMotion:bool, assist:0|1|2},
+  settings: {fov:90, bob:false, chase:bool /* default true */, reducedMotion:bool, assist:0|1|2},
 }
 ```
 
@@ -104,7 +104,7 @@ export function createRide() -> {
 }
 ```
 - The app draws the returned backdrop canvas on the bg layer. The optional return value lets the ride nudge or scale the backdrop for parallax; the app applies it as a CSS transform.
-- `settings.chase` means a third-person chase camera instead of first person.
+- `settings.chase` means a third-person chase camera instead of first person. It is the default (2026-09-29); a saved choice is kept, and the Camera switch in Settings goes back to first person.
 - `settings.fov` is in degrees. `settings.bob` controls head bob.
 - `settings.reducedMotion` means no shake, no speed effects, and gentle transitions.
 
