@@ -495,6 +495,18 @@ html.turn #turn{display:grid;position:fixed;inset:0;z-index:50;place-items:cente
 // Offline support once installed. Browsers only allow service workers on https (or localhost).
 if('serviceWorker' in navigator&&(isSecureContext||location.hostname==='localhost'))
   addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(e=>console.warn('service worker:',e)));
+// Auto-update: a tab or installed app left open keeps running the code it loaded. When it comes back into view,
+// ask the server (cheaply: ETag/Last-Modified only) whether the game's files changed; if so, reload (never mid-ride:
+// it waits for the ride to end). Reloading is safe, since the app reopens your last level and its drawing.
+(()=>{const FILES=['index.html','src/app.js','src/physics.js','src/levels.js','src/side.js','src/ride.js','src/audio.js','riso.js'];
+  const stamp=()=>Promise.all(FILES.map(f=>fetch(f,{method:'HEAD',cache:'no-cache'}).then(r=>r.ok?(r.headers.get('etag')||r.headers.get('last-modified')||''):'').catch(()=>null)))
+    .then(a=>a.includes(null)?null:a.join('|'));   // null = offline: say nothing
+  let base=null,lastCheck=0,pending=false;
+  addEventListener('load',()=>stamp().then(s=>base=s));
+  const reloadWhenSafe=()=>{const m=window.game&&game.S&&game.S.mode;if(m==='ride'){setTimeout(reloadWhenSafe,1500);return;}location.reload();};
+  document.addEventListener('visibilitychange',()=>{if(document.hidden||pending||Date.now()-lastCheck<60e3)return;lastCheck=Date.now();
+    navigator.serviceWorker&&navigator.serviceWorker.getRegistration().then(r=>r&&r.update()).catch(()=>{});
+    stamp().then(s=>{if(s==null)return;if(base==null){base=s;return;}if(s!==base){pending=true;reloadWhenSafe();}});});})();
 </script>
 </body>
 </html>

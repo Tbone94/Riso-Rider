@@ -1,7 +1,7 @@
 // sw.js — offline support for the installed app.
-// Network first, cache as fallback: you always get the newest build when online (so development
-// never serves stale code), and the last-seen build still plays with no connection.
-const CACHE = 'riso-rider-v5';
+// Network first, cache as fallback: you always get the newest build when online (so a deploy reaches players
+// with no cache clearing), and the last-seen build still plays with no connection.
+const CACHE = 'riso-rider-v6';
 const SHELL = [
   './', 'index.html', 'manifest.webmanifest', 'riso.js',
   'src/app.js', 'src/physics.js', 'src/levels.js', 'src/side.js', 'src/ride.js', 'src/audio.js',
@@ -25,7 +25,9 @@ self.addEventListener('fetch', e => {
   const req = e.request;
   if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
   e.respondWith(
-    fetch(req).then(res => {
+    // cache:'no-cache' revalidates with the server every time (a cheap 304 when nothing changed), so the browser's
+    // own HTTP cache (GitHub Pages allows 10 min) can't hand out an old build after a deploy.
+    fetch(req.url, { cache: 'no-cache', credentials: 'same-origin' }).then(res => {
       if (res.ok) { const copy = res.clone(); caches.open(CACHE).then(c => c.put(req, copy)); }
       return res;
     }).catch(() => caches.match(req, { ignoreSearch: true }).then(hit => hit || caches.match('index.html')))
