@@ -43,9 +43,11 @@ export const JUMP={v:300,coyote:.15,buffer:.15,apexGravity:.6,apexBand:110};
 export const STEER={acc:600,damp:6,center:5,sway:350,build:1.6,freq:2.4,
   narrow:{acc:250,damp:7.5,center:4},air:{acc:250,damp:4,center:2},assist:{center:3,sway:.3}};
 // Push (↑) drives toward the level's forward direction; ↓ brakes, and once you're nearly stopped it rolls you
-// backward (up to `back`). In the air ↑/↓ give a small forward/back nudge (`air`, up to `airMax` along x),
-// except during a sling's fling, so the fling follows its preview exactly.
-export const PUSH={acc:260,max:260,brake:1.6,back:160,air:120,airMax:260};
+// backward (up to `back`). Push is for nudging and getting unstuck, not for speed: up to `max` only, so you can't
+// push your way over a gap the level means you to draw across (at 260, 13 of 50 levels won with zero ink; at 75,
+// none that a jump alone can't). `air` is an optional forward/back nudge in the air (up to `airMax` along x,
+// never during a sling's fling); it is 0 because even 40 let you steer over gaps without ink.
+export const PUSH={acc:260,max:75,brake:1.6,back:75,air:0,airMax:260};
 // Catching (playability): every surface and tool sits at z=0, but a rider arriving a little to the side used to
 // sail past it in 3D (a rope "broke", a sling or wind "didn't pick up"). Arriving at a new surface, rope, wind
 // or sling, the sideways window is `z` wider, and for `t` s afterwards (all the time on a rope or in wind) z is
@@ -200,7 +202,7 @@ export function step(w,L,input=NO_INPUT){
       if(input.push>0){if(along<PUSH.max){ax+=tx*dir*PUSH.acc*input.push;ay+=ty*dir*PUSH.acc*input.push;}}
       else if(along>30){const k=1-PUSH.brake*h*-input.push;r.vx*=k;r.vy*=k;}       // brake…
       else if(along>-PUSH.back){ax+=tx*dir*PUSH.acc*input.push;ay+=ty*dir*PUSH.acc*input.push;}}   // …then roll backward
-    else if(!r.grounded&&input.push&&r.sling<0&&r.slingFly>=SLING.float){const along=r.vx*fwd*Math.sign(input.push);
+    else if(PUSH.air&&!r.grounded&&input.push&&r.sling<0&&r.slingFly>=SLING.float){const along=r.vx*fwd*Math.sign(input.push);
       if(along<PUSH.airMax)ax+=fwd*PUSH.air*input.push;}
     // boost pads: drive speed along the pad up to BOOST.speed while grounded on it
     if(r.grounded&&w.boosts.length){let on=-1;for(let bi=0;bi<w.boosts.length;bi++){const b=w.boosts[bi],[cx,cy]=closest(r.x,r.y,b.ax,b.ay,b.bx,b.by);

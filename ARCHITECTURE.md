@@ -415,8 +415,9 @@ User feedback: tools "don't pick up" the ball (vertical ropes break, slings miss
   - The fling's gravity ease-in is integrated per substep, the same way as the preview.
 - **Push:**
   - ↑ pushes while your *forward* speed is under `PUSH.max`. Before, it was total speed, so ↑ did nothing while you rolled backward fast.
-  - ↓ brakes, then below 30 forward speed rolls you backward, up to `PUSH.back` (160).
-  - In the air, ↑/↓ nudge along x (`PUSH.air` 120, up to `airMax`), except during a fling's float.
+  - ↓ brakes, then below 30 forward speed rolls you backward, up to `PUSH.back`.
+  - **Push is slow on purpose (2026-10-02):** `PUSH.max` 75 (was 260) and `PUSH.back` 75. At 260, holding ↑ won 13 of 50 levels with zero ink. The mid-air nudge (`PUSH.air`) is 0, because even 40 reopened two levels. `PUSH.air` is kept as a switch.
+  - Zero-ink check: with push at 75, only black-ice, ski-jump and headwind can still be won with no drawing, and those need jump timing alone.
 - **Levels:** solutions with slings or winds that the new physics changed were re-aimed or nudged with the same ink. Drops were re-placed with `tools/tune.mjs` on sling, floor-gives-way, keyhole, moonshot, ricochet, slalom, ink-detour and machine. All pars are unchanged, and validate passes.
 
 ## App
