@@ -230,9 +230,19 @@ body.touch #ridebar .deskonly{display:none}
 .pad{flex:1;height:66px}
 .pad .face{width:100%;font-size:20px}
 .pad svg{width:26px;height:26px;fill:currentColor}
-.pad.jump{flex:1.6}
+.pad.jump{flex:1.6;align-self:center}
 .pad.down .face{background:var(--key);color:var(--paper)}
 .pad.jump.down .face{color:var(--light)}
+/* analog stick: x steers, up pushes forward, down brakes then rolls back. The whole box is the hit area. */
+.stick{--d:112px;flex:none;width:calc(var(--d) + 20px);height:calc(var(--d) + 12px);display:grid;place-items:center;touch-action:none;user-select:none;-webkit-user-select:none;color:var(--key)}
+.stick .ring{position:relative;width:var(--d);height:var(--d);border-radius:50%;border:2px solid currentColor;-webkit-mask:var(--inkmask) 0 0/140px;mask:var(--inkmask) 0 0/140px}
+.stick .ring::before{content:"";position:absolute;inset:16%;border-radius:50%;border:1px dashed currentColor;opacity:.45}
+.stick .t{position:absolute;font:normal 11px/1 var(--mono);opacity:.7}
+.stick .up{top:5px;left:50%;translate:-50% 0}.stick .dn{bottom:5px;left:50%;translate:-50% 0}
+.stick .lf{left:6px;top:50%;translate:0 -50%}.stick .rt{right:6px;top:50%;translate:0 -50%}
+.stick .knob{position:absolute;left:50%;top:50%;width:44%;height:44%;margin:-22% 0 0 -22%;border-radius:50%;background:currentColor;box-shadow:2px 2px 0 var(--mid);transition:transform .12s ease-out}
+.stick.on .knob{transition:none}
+.stick.on .ring{border-width:2.5px}
 #ridebar .keys{font:13px/1.2 var(--mono);margin-left:auto;opacity:.85}
 /* job ticket stub (win) */
 #ticket{position:relative;display:flex;flex-direction:column;gap:2px;padding:9px 14px 9px 22px;font:14px/1.35 var(--mono);border:1px solid color-mix(in srgb,var(--key) 30%,transparent);
@@ -334,12 +344,11 @@ html.gm .acts .stamp{height:44px;width:100%}
 html.gm .acts .stamp .face{width:100%;padding:0;font-size:12px;letter-spacing:.1em}
 html.gm .acts #go{grid-column:1/-1;height:60px;flex:none}
 html.gm .acts #go .face{font-size:19px}
-/* ride: steer pads bottom-left, JUMP bottom-right, small restart/edit above it */
+/* ride: the stick bottom-left, JUMP bottom-right, small restart/edit above it */
 html.gm #ridebar{display:contents}
 html.gm #ridebar .touchpad{display:contents}
 html.gm .pad{position:fixed;z-index:8;bottom:calc(var(--sb) + 8px);width:66px;height:66px;flex:none}
-html.gm .pad[data-pad="left"]{left:calc(var(--sl) + 8px)}
-html.gm .pad[data-pad="right"]{left:calc(var(--sl) + 82px)}
+html.gm .stick{position:fixed;z-index:8;left:calc(var(--sl) + 4px);bottom:calc(var(--sb) + 4px);--d:118px}
 html.gm .pad.jump{right:calc(var(--sr) + 8px);width:100px;height:84px}
 html.gm #ridebar #toedit,html.gm #ridebar #restart{display:inline-flex;position:fixed;z-index:8;right:calc(var(--sr) + 8px);width:100px;height:38px}
 html.gm #ridebar #toedit{bottom:calc(var(--sb) + 98px)}
@@ -453,13 +462,14 @@ html.turn #turn{display:grid;position:fixed;inset:0;z-index:50;place-items:cente
 
   <footer id="ridebar" hidden>
     <div class="touchpad">
-      <button class="stamp pad" data-pad="left" aria-label="Steer left"><span class="face"><svg viewBox="0 0 24 24"><path d="M15 4L6 12l9 8z"/></svg></span></button>
+      <div class="stick" id="stick" role="application" aria-label="Steer and push: drag left or right to steer, up to push forward, down to brake and roll back">
+        <div class="ring"><i class="t up">▲</i><i class="t dn">▼</i><i class="t lf">◀</i><i class="t rt">▶</i><span class="knob"></span></div>
+      </div>
       <button class="stamp pad jump solid" data-pad="jump"><span class="face">Jump</span></button>
-      <button class="stamp pad" data-pad="right" aria-label="Steer right"><span class="face"><svg viewBox="0 0 24 24"><path d="M9 4l9 8-9 8z"/></svg></span></button>
     </div>
     <button class="stamp" id="toedit" title="Back to the drawing (E)"><span class="face">◀ Edit <kbd class="deskonly">E</kbd></span></button>
     <button class="stamp deskonly" id="restart" title="Ride again (R)"><span class="face">Restart <kbd>R</kbd></span></button>
-    <span class="keys deskonly">← → steer · space jump · ↑ push · ↓ brake</span>
+    <span class="keys deskonly">← → steer · space jump · ↑ push · ↓ brake / back</span>
   </footer>
 
   <footer id="winbar" hidden>

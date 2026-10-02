@@ -4,7 +4,7 @@ import * as P from '../../src/physics.js';
 const base=(o)=>({id:'t',name:'t',tools:[],ink:1e4,par:[0,0],start:{x:30,y:91,vx:160},goal:{x:-500,y:-500,r:1},blocks:[],hazards:[],...o});
 let bad=0;const ok=(name,cond,info='')=>{console.log(`${cond?'PASS':'FAIL'}  ${name}${info?'  ('+info+')':''}`);if(!cond)bad++;};
 const finite=w=>{const r=w.rider;return[r.x,r.y,r.z,r.vx,r.vy,r.vz].every(Number.isFinite);};
-function ride(L,items,pol,T=6,watch){const w=P.build(L,items);let maxV=0,allFinite=true;
+function ride(L,items,pol,T=6,watch,z=0){const w=P.build(L,items);w.rider.z=z;let maxV=0,allFinite=true;
   while(w.status==='run'&&w.t<T){P.step(w,L,pol(w));maxV=Math.max(maxV,w.rider.speed);if(!finite(w))allFinite=false;if(watch)watch(w);}
   return{w,maxV,allFinite};}
 const none=()=>P.NO_INPUT;
@@ -152,6 +152,29 @@ for(const [label,a,floor] of [['straight down',Math.PI/2,true],['straight up',-M
 {const L=base({start:{x:30,y:151,vx:150},blocks:[[[0,160],[130,160],[130,182],[0,182]]],hazards:[[[0,486],[800,486]]]});
   const {w}=ride(L,[{type:'sling',x:140,y:190,a:-0.63}],none,8);
   ok('sling against a ledge releases into open air',w.status!=='run'&&w.t<6&&w.events.some(e=>e.type==='slingOut'),`status=${w.status} t=${w.t.toFixed(1)}`);}
+
+// ---------- playability (catching, true sling aim, reverse) ----------
+// The fling follows the dotted preview exactly, whichever way the rider orbits.
+for(const [vx,vy] of [[300,-300],[-300,-200],[500,100]]){const sl={x:400,y:250,a:-.8},L=base({start:{x:400-vx*.3,y:250-vy*.3-.5*P.G*.09,vx,vy},hazards:[]});
+  let out=null,worst=0;const pv=P.slingPreview(sl,450,.6);
+  ride(L,[{type:'sling',...sl}],none,2,w=>{if(out==null&&w.events.some(e=>e.type==='slingOut'))out=w.t;else if(out!=null&&w.t-out<.45){const r=w.rider;let m=1e9;
+    for(let i=1;i<pv.length;i++){const[c0,c1]=P.closest(r.x,r.y,pv[i-1][0],pv[i-1][1],pv[i][0],pv[i][1]);m=Math.min(m,Math.hypot(r.x-c0,r.y-c1));}worst=Math.max(worst,m);}});
+  ok(`sling fling matches its preview (entry ${vx},${vy})`,out!=null&&worst<1,`off by ${worst.toFixed(2)}`);}
+// A sling inside a wind current: the current doesn't grab the fling back.
+{const L=base({start:{x:100,y:200,vx:200},hazards:[]});let o=null,v=null;
+  ride(L,[{type:'wind',pts:[[120,200],[300,200],[500,200]]},{type:'sling',x:420,y:200,a:-Math.PI/2}],none,2,w=>{if(o==null&&w.events.some(e=>e.type==='slingOut'))o=w.t;if(o!=null&&v==null&&w.t-o>.25)v=[w.rider.vx,w.rider.vy];});
+  ok('wind doesn\'t steal a sling\'s fling',v&&Math.abs(v[0])<20&&v[1]<-450,`velocity after .25 s ${v&&v.map(n=>n.toFixed(0))}`);}
+// Arriving a little to the side still catches: a rope, a line, a sling.
+for(const z of [35,45]){const L=base({start:{x:400,y:150,vx:0},hazards:[[[0,486],[800,486]]]});
+  let eng=false;const a=ride(L,[{type:'rope',a:[340,300],b:[460,300]}],none,1.5,w=>{if(w.ropes[0].side)eng=true;},z);
+  const b=ride(L,[{type:'line',pts:[[300,300],[600,320]]}],none,1.2,null,z);
+  const c=ride(base({start:{x:200,y:250,vx:400,vy:-200},hazards:[]}),[{type:'sling',x:300,y:212,a:0}],none,1,null,z);
+  ok(`catch at z ${z}: rope, line, sling`,eng&&b.w.rider.grounded&&Math.abs(b.w.rider.z)<P.WIDTH.line&&c.w.events.some(e=>e.type==='sling'),`rope ${eng} line ${b.w.rider.grounded} z→${b.w.rider.z.toFixed(1)} sling ${c.w.events.some(e=>e.type==='sling')}`);}
+// …but steering off a tightrope's side still drops you (no catch for offSide riders): covered by 'steer off the side -> fell' above.
+// ↓ brakes, then rolls you backward on flat ground.
+{const L=base({start:{x:300,y:291,vx:150},blocks:[[[0,300],[800,300],[800,400],[0,400]]],goal:{x:900,y:0,r:1}});
+  const {w}=ride(L,[],()=>({steer:0,jump:false,jumpHeld:false,push:-1}),2.5);
+  ok('brake then reverse',w.rider.vx<-P.PUSH.back+20&&w.rider.vx>-P.PUSH.back-20,`vx ${w.rider.vx.toFixed(0)}`);}
 
 console.log(bad?`\n${bad} edge case(s) failed`:'\nall edge cases pass');
 process.exit(bad?1:0);

@@ -424,15 +424,15 @@ $$('#s-assist span').forEach(b=>{b.onclick=()=>{A('ui','toggle');setAssist(+b.da
 
 // ---------- ride HUD (DOM part; ride.js draws the in-canvas HUD) ----------
 function showHud(){syncSettings();const kh=$('#keyhint');
-  kh.textContent=S.settings.assist===2?'Auto-ride is on · E — back to your drawing':isTouch()?'◀ ▶ steer · tap to jump':'← → steer · space jump (hold to float) · ↑ push · ↓ brake · R restart · E edit';
+  kh.textContent=S.settings.assist===2?'Auto-ride is on · E — back to your drawing':isTouch()?'stick steers · ▲ push · ▼ brake, back · tap jumps':'← → steer · space jump (hold to float) · ↑ push · ↓ brake, then back · R restart · E edit';
   kh.classList.remove('fade');clearTimeout(keyhintT);keyhintT=setTimeout(()=>kh.classList.add('fade'),3200);}
 
 // ---------- input ----------
-const pressed=new Set(),touchHeld={left:new Set(),right:new Set(),jump:new Set()};
+const pressed=new Set(),touchHeld={jump:new Set()},stick={x:0,y:0,id:null};   // stick: analog, x steer, y push (up = +)
 let jumpEdge=false;
 const CODES={left:['ArrowLeft','KeyA'],right:['ArrowRight','KeyD'],up:['ArrowUp','KeyW'],down:['ArrowDown','KeyS'],jump:['Space']};
 const held=k=>CODES[k].some(c=>pressed.has(c))||(touchHeld[k]&&touchHeld[k].size>0);
-function readInput(){return{steer:(held('right')?1:0)-(held('left')?1:0),jump:jumpEdge,jumpHeld:held('jump'),push:(held('up')?1:0)-(held('down')?1:0)};}
+function readInput(){return{steer:clamp((held('right')?1:0)-(held('left')?1:0)+stick.x,-1,1),jump:jumpEdge,jumpHeld:held('jump'),push:clamp((held('up')?1:0)-(held('down')?1:0)+stick.y,-1,1)};}
 const TOOLKEYS={Digit1:'line',Digit2:'wind',Digit3:'rope',Digit4:'sling',Numpad1:'line',Numpad2:'wind',Numpad3:'rope',Numpad4:'sling'};   // the well is retired; 4 is the sling
 addEventListener('keydown',e=>{
   const t=e.target;
@@ -467,7 +467,7 @@ addEventListener('keydown',e=>{
   else if(TOOLKEYS[c]&&S.level.tools.includes(TOOLKEYS[c])){if(S.tool!==TOOLKEYS[c])A('ui','tool');S.tool=TOOLKEYS[c];ui();}
   else if(c==='Escape'){hideOffer();hideSlip();}});
 addEventListener('keyup',e=>pressed.delete(e.code));
-addEventListener('blur',()=>{pressed.clear();Object.values(touchHeld).forEach(s=>s.clear());$$('.pad').forEach(b=>b.classList.remove('down'));});
+addEventListener('blur',()=>{pressed.clear();Object.values(touchHeld).forEach(s=>s.clear());$$('.pad').forEach(b=>b.classList.remove('down'));stickRelease();});
 
 // touch: the on-screen pads, and tapping the ride stage jumps
 if(matchMedia('(pointer:coarse)').matches)document.body.classList.add('touch');
@@ -480,6 +480,20 @@ $$('.pad').forEach(b=>{const k=b.dataset.pad,set=touchHeld[k];
   b.addEventListener('pointerdown',e=>{e.preventDefault();try{b.setPointerCapture(e.pointerId);}catch(_){}set.add(e.pointerId);b.classList.add('down');if(k==='jump')jumpEdge=true;});
   ['pointerup','pointercancel','lostpointercapture'].forEach(t=>b.addEventListener(t,up));
   b.addEventListener('contextmenu',e=>e.preventDefault());});
+// The stick: drag from anywhere in its box. Past a small dead zone, x steers and y pushes (up) or brakes then
+// rolls back (down), both analog; the knob follows the thumb up to the ring.
+const stickEl=$('#stick'),knob=stickEl.querySelector('.knob');
+function stickMove(e){const r=stickEl.querySelector('.ring').getBoundingClientRect(),R=r.width/2;
+  let dx=(e.clientX-(r.left+R))/R,dy=(e.clientY-(r.top+R))/R;const m=Math.hypot(dx,dy);if(m>1){dx/=m;dy/=m;}
+  knob.style.transform=`translate(${dx*R*.62}px,${dy*R*.62}px)`;
+  const dz=.16,ax=v=>Math.abs(v)<dz?0:Math.sign(v)*(Math.abs(v)-dz)/(1-dz);
+  stick.x=ax(dx);stick.y=-ax(dy);}
+function stickRelease(){stick.id=null;stick.x=stick.y=0;knob.style.transform='';stickEl.classList.remove('on');}
+stickEl.addEventListener('pointerdown',e=>{e.preventDefault();if(stick.id!=null)return;stick.id=e.pointerId;try{stickEl.setPointerCapture(e.pointerId);}catch(_){}
+  stickEl.classList.add('on');stickMove(e);});
+stickEl.addEventListener('pointermove',e=>{if(e.pointerId===stick.id)stickMove(e);});
+['pointerup','pointercancel','lostpointercapture'].forEach(t=>stickEl.addEventListener(t,e=>{if(e.pointerId===stick.id)stickRelease();}));
+stickEl.addEventListener('contextmenu',e=>e.preventDefault());
 const tap=$('#tap');
 tap.addEventListener('pointerdown',e=>{e.preventDefault();if(S.mode!=='ride')return;   // a tap that skips the swoop also jumps, like Space
   try{tap.setPointerCapture(e.pointerId);}catch(_){}touchHeld.jump.add(e.pointerId);jumpEdge=true;});

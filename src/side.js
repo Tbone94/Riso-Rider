@@ -22,10 +22,10 @@ const slingCost=()=>COST.sling!=null?COST.sling:120;
 function itemCost(it){return it.type==='sling'?slingCost():physItemCost(it);}
 const inkUsed=items=>items.reduce((s,it)=>s+itemCost(it),0);
 // The first stretch of the fling after release: physics' own slingPreview when present, else a matching estimate.
-function slingArc(sl,speed=450,t=.45){if(typeof P.slingPreview==='function'){try{const r=P.slingPreview(sl,speed,t,0);/* dir 0: the centre line; the real exit is ±ro either side, depending on which way the rider orbits */if(r&&r.length)return r;}catch(_){}}
+function slingArc(sl,speed=450,t=.45){if(typeof P.slingPreview==='function'){try{const r=P.slingPreview(sl,speed,t,0);/* dir 0: the centre line, which is exactly where the rider is released */if(r&&r.length)return r;}catch(_){}}
   const k=SL(),ux=Math.cos(sl.a),uy=Math.sin(sl.a),v=Math.min(k.maxSpeed,Math.max(speed,k.minSpeed)*k.boost);
-  // release where the orbit's tangent equals the aim (the side that turns clockwise on screen)
-  const x0=sl.x+uy*k.ro,y0=sl.y-ux*k.ro,out=[];
+  // released from the sling's centre, heading along the aim
+  const x0=sl.x,y0=sl.y,out=[];
   for(let i=0;i<=18;i++){const tt=t*i/18;out.push([x0+ux*v*tt,y0+uy*v*tt+.5*G*tt*tt]);}return out;}
 // Well pull at distance d. Uses physics' wellForce(d) when it exists (it replaces the old falloff), else the
 // v1 formula with the current constants. Read WELL.range live: physics may retune it.

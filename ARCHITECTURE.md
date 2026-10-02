@@ -396,3 +396,29 @@ Levels 1–10 are the tutorial. **Levels 11–50 come in five chapters of eight.
 - **Level board:** it shows a chapter tab (`.chap`, "CH 2 · Ground Rules") before each chapter's first level.
 - **Unlocking:** clearing a level unlocks the next **two**, so one hard level never blocks progress.
 - **`sw.js`:** it caches the chapter files, and the cache is now `riso-rider-v4`.
+
+---
+# Contract v6: playability round (2026-10-01)
+User feedback: tools "don't pick up" the ball (vertical ropes break, slings miss after wind), the fling doesn't follow its dotted preview, and touch has no forward/back. API unchanged; constants and behaviour below.
+
+## Physics
+- **Catching (`CATCH={z:26,pull:14,t:.3}`).** Every surface and tool sits at z=0, so a rider a little to the side used to pass straight through it in 3D. That looked like a rope "breaking" in the side view. Now:
+  - Arriving at something new (landing, rolling onto another surface, touching a rope, entering wind, or reaching a sling), the sideways window is `CATCH.z` wider.
+  - For `CATCH.t` s after a catch, and the whole time on a rope or in wind, z eases inside half that surface's width.
+  - A rope no longer lets go mid-stretch because you steered.
+  - Riders who steered off a side (`offSide`) get none of this, so tightrope falls are unchanged.
+  - New rider fields: `catchT`, `catchHw`, `windIn`, `windSkip`.
+- **Wind** grips harder when you cross it (`WIND.cross`) and funnels you to its centre line (`WIND.funnel`). Fast, steep entries used to punch through it. A sling's fling is not grabbed back by the current it was caught from, until it has left that current.
+- **Sling:**
+  - Capture is swept, so fast riders can't skip the ring.
+  - The orbit spirals into the centre over its last 1.6 rad, and the release is **from the sling's centre, along the aim**. The fling now follows `slingPreview` (dir 0, now the default) to within 0.1 units. It used to leave from the ring's edge, `ro` to one side.
+  - The fling's gravity ease-in is integrated per substep, the same way as the preview.
+- **Push:**
+  - ↑ pushes while your *forward* speed is under `PUSH.max`. Before, it was total speed, so ↑ did nothing while you rolled backward fast.
+  - ↓ brakes, then below 30 forward speed rolls you backward, up to `PUSH.back` (160).
+  - In the air, ↑/↓ nudge along x (`PUSH.air` 120, up to `airMax`), except during a fling's float.
+- **Levels:** solutions with slings or winds that the new physics changed were re-aimed or nudged with the same ink. Drops were re-placed with `tools/tune.mjs` on sling, floor-gives-way, keyhole, moonshot, ricochet, slalom, ink-detour and machine. All pars are unchanged, and validate passes.
+
+## App
+- **Touch:** an analog **stick** (`#stick`) replaces the ◀ ▶ pads. x steers; up pushes forward; down brakes, then rolls back. Dead zone 0.16. Keyboard and stick add up in `readInput`. Jump button and tap-to-jump are unchanged.
+- `sw.js` cache → `riso-rider-v5`.

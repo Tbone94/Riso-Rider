@@ -8,7 +8,7 @@
 export const W=800,H=500,G=900,R=9,DT=1/60,SUB=8;
 export const COST={line:1,wind:1.2,rope:1.5,well:120,sling:120};
 export const WIDTH={block:70,line:13,rope:24,hazard:1e9};   // half-widths along z
-export const WIND={radius:40,speed:430,grip:7,hw:44};        // currents carry you at a set speed
+export const WIND={radius:40,speed:430,grip:7,hw:44,funnel:8,cross:.6};        // currents carry you at a set speed
 // Gravity wells are smooth magnets. Pull = strength·(1−d/range)^p toward the well, eased to 0 inside `core`
 // (no spike at the centre), with light velocity damping (coreDamp /s) in the core so nothing slingshots.
 // The summed pull of all wells is capped at `max`. Wells only act while you're airborne (no rocking-on-the-
@@ -42,7 +42,15 @@ export const JUMP={v:300,coyote:.15,buffer:.15,apexGravity:.6,apexBand:110};
 // assist 1 multiplies centring by assist.center and sway by assist.sway (app also runs 0.7× time).
 export const STEER={acc:600,damp:6,center:5,sway:350,build:1.6,freq:2.4,
   narrow:{acc:250,damp:7.5,center:4},air:{acc:250,damp:4,center:2},assist:{center:3,sway:.3}};
-export const PUSH={acc:260,max:260,brake:1.6};
+// Push (↑) drives toward the level's forward direction; ↓ brakes, and once you're nearly stopped it rolls you
+// backward (up to `back`). In the air ↑/↓ give a small forward/back nudge (`air`, up to `airMax` along x),
+// except during a sling's fling, so the fling follows its preview exactly.
+export const PUSH={acc:260,max:260,brake:1.6,back:160,air:120,airMax:260};
+// Catching (playability): every surface and tool sits at z=0, but a rider arriving a little to the side used to
+// sail past it in 3D (a rope "broke", a sling or wind "didn't pick up"). Arriving at a new surface, rope, wind
+// or sling, the sideways window is `z` wider, and for `t` s afterwards (all the time on a rope or in wind) z is
+// pulled inside half the surface's width at rate `pull` /s. Riders who steered off a side (offSide) get none of it.
+export const CATCH={z:26,pull:14,t:.3};
 // Round A. Ink drops: collected within r (x/y) and hz (z); refund counts for stars only.
 export const DROP={r:16,hz:22};
 // Ice: no friction, steering ×steer, lateral damping `damp` (you keep drifting), no centring/push/brake.
@@ -92,7 +100,7 @@ export function build(L,items,opts={}){
     rider:{x:L.start.x,y:L.start.y,z:0,vx:L.start.vx||0,vy:L.start.vy||0,vz:0,a:0,
       grounded:false,groundKind:null,groundHw:WIDTH.block,n:[0,-1],coyote:1e9,jumpBuf:0,airT:0,speed:0,
       jumped:false,sway:0,lineT:0,swayT:0,swaySign:1,offSide:false,offY:0,owner:0,surface:null,boost:-1,
-      sling:-1,slingK:0,slingAng:0,slingDir:1,slingSpeed:0,slingSwept:0,slingSweep:0,slingLast:-1,slingLastT:-1e9,slingFly:9},
+      sling:-1,slingK:0,slingAng:0,slingDir:1,slingSpeed:0,slingSwept:0,slingSweep:0,slingLast:-1,slingLastT:-1e9,slingFly:9,catchT:0,catchHw:WIDTH.block,windIn:[],windSkip:[]},
     segs:[],hazards:[],ropes:[],winds:[],wells:[],drops:[],crumbles:[],boosts:[],slings:[],slingCatches:[]};
   // x0,x1,y0,y1: the segment's bounding box grown by its reach, for a cheap early-out.
   // owner: which block or drawn line the segment belongs to.
@@ -150,27 +158,33 @@ export function step(w,L,input=NO_INPUT){
   r.vz=(r.vz+az*DT)*Math.exp(-(onIce?ICE.damp:K.damp)*DT);
   if(!Number.isFinite(r.vz))r.vz=0;
   r.z+=r.vz*DT;
+  if(r.catchT>0&&!r.offSide){const lim=r.catchHw*.5,zt=clamp(r.z,-lim,lim);if(zt!==r.z){r.z+=(zt-r.z)*(1-Math.exp(-CATCH.pull*DT));if(r.vz*(r.z-zt)>0)r.vz=0;}r.catchT=Math.max(0,r.catchT-DT);}
+  const slack=r.offSide?0:CATCH.z;   // the wider sideways window for arriving at something new
 
   // A well can't trap you: after `hold` s of airborne time inside wells' reach, their pull fades out
   // over `letGo` s, so any back-and-forth dies and you fall along gravity. Leaving every field resets it.
   if(w.wells.length){const inField=w.wells.some(wl=>Math.hypot(wl.x-r.x,wl.y-r.y)<WELL.range);
     r.wellT=inField?(r.wellT||0)+(r.grounded?0:DT):0;r.wellGrip=clamp(1-(r.wellT-WELL.hold)/WELL.letGo,0,1);}
-  let grounded=false,inWind=false,onRope=false;
+  let grounded=false,inWind=false,onRope=false;const windIn=[];
   for(let sub=0;sub<SUB;sub++){
     let ax=0,ay=G;
-    if(r.slingFly<SLING.float&&!r.grounded){const q=r.slingFly/SLING.float;ay*=q*q;}   // the fling's float
+    const fly=r.slingFly+sub*h;if(fly<SLING.float&&!r.grounded){const q=fly/SLING.float;ay*=q*q;}   // the fling's float
     if(r.jumped&&input.jumpHeld&&!r.grounded&&Math.abs(r.vy)<JUMP.apexBand)ay*=JUMP.apexGravity;
-    for(const wind of w.winds){if(Math.abs(r.z)>wind.hw)continue;let best=1e9,bs=null,bx=0,by=0;
+    for(let wi=0;wi<w.winds.length;wi++){const wind=w.winds[wi];if(Math.abs(r.z)>wind.hw+slack)continue;let best=1e9,bs=null,bx=0,by=0;
       for(const si of wind.grid instanceof Map?wind.grid.get(cellKey(Math.floor(r.x/CELL),Math.floor(r.y/CELL)))||NONE:wind.segs.keys()){const s=wind.segs[si];if(r.x<s.x0||r.x>s.x1||r.y<s.y0||r.y>s.y1)continue;const[cx,cy]=closest(r.x,r.y,s.ax,s.ay,s.bx,s.by),d=Math.hypot(r.x-cx,r.y-cy);if(d<best){best=d;bs=s;bx=cx;by=cy;}}
-      if(best<WIND.radius){const k=Math.sqrt(1-best/WIND.radius);inWind=true;
-        ax+=(bs.tx*WIND.speed-r.vx)*WIND.grip*k+(bx-r.x)*4*k;ay+=(bs.ty*WIND.speed-r.vy)*WIND.grip*k+(by-r.y)*4*k-G*.85*k;}}
+      // A sling's fling isn't grabbed back by the current it was caught from, until it has left that current.
+      if(r.windSkip.includes(wi)){if(best>=WIND.radius)r.windSkip=r.windSkip.filter(i=>i!==wi);continue;}
+      if(best<WIND.radius){const k=Math.sqrt(1-best/WIND.radius);inWind=true;if(!windIn.includes(wi))windIn.push(wi);
+        // Grip is strongest when you're moving across the current (that's when fast riders used to punch through).
+        const vn=Math.abs(r.vx*bs.ty-r.vy*bs.tx),gk=WIND.grip*(1+Math.min(WIND.cross,vn/300))*k;
+        ax+=(bs.tx*WIND.speed-r.vx)*gk+(bx-r.x)*WIND.funnel*k;ay+=(bs.ty*WIND.speed-r.vy)*gk+(by-r.y)*WIND.funnel*k-G*.85*k;}}
     if(w.wells.length&&!r.grounded){let wx=0,wy=0,damp=0;   // wells pull only while you're in the air
       for(const wl of w.wells){const dx=wl.x-r.x,dy=wl.y-r.y,d=Math.hypot(dx,dy);
         if(d<WELL.range&&d>1e-6){const f=wellForce(d);wx+=dx/d*f;wy+=dy/d*f;if(d<WELL.core)damp=Math.max(damp,1-d/WELL.core);}}
       const m=Math.hypot(wx,wy);if(m>WELL.max){wx*=WELL.max/m;wy*=WELL.max/m;}const gr=r.wellGrip??1;ax+=wx*gr;ay+=wy*gr;
       if(damp>0){ax-=r.vx*WELL.coreDamp*damp;ay-=r.vy*WELL.coreDamp*damp;}}
     for(const rp of w.ropes){
-      if(Math.abs(r.z)>rp.hw+R*.4){if(rp.side){rp.side=0;rp.depth=0;}continue;}
+      if(Math.abs(r.z)>rp.hw+R*.4+slack){if(rp.side){rp.side=0;rp.depth=0;}continue;}
       const rx=r.x-rp.ax,ry=r.y-rp.ay,t=(rx*rp.tx+ry*rp.ty)/rp.len,sd=rx*rp.nx+ry*rp.ny;
       if(!rp.side&&t>0&&t<1&&Math.abs(sd)<ROPE.pad)rp.side=sd<0?-1:1;
       if(!rp.side)continue;const p=ROPE.pad-rp.side*sd;
@@ -178,12 +192,16 @@ export function step(w,L,input=NO_INPUT){
       // Stiffer toward the anchors, like a real trampoline.
       const e=Math.max(.3,Math.sin(Math.PI*Math.min(1,Math.max(0,t)))),vn=(r.vx*rp.nx+r.vy*rp.ny)*rp.side,f=ROPE.k/e*p-ROPE.damp*vn;
       ax+=rp.nx*rp.side*f;ay+=rp.ny*rp.side*f;rp.depth=p;rp.cx=r.x-rp.nx*rp.side*ROPE.pad;rp.cy=r.y-rp.ny*rp.side*ROPE.pad;
-      onRope=true;grounded=true;r.n=[rp.nx*rp.side,rp.ny*rp.side];r.groundHw=rp.hw;r.groundKind='rope';r.owner=rp.owner;}
+      onRope=true;grounded=true;r.n=[rp.nx*rp.side,rp.ny*rp.side];r.groundHw=rp.hw;r.groundKind='rope';r.owner=rp.owner;r.catchT=CATCH.t;r.catchHw=rp.hw;}
     // push / brake along the surface you're on. Push always drives toward the level's forward direction
     // (the way the first-person camera faces), so ↑ while rolling backward slows you and sends you forward.
-    if(r.grounded&&input.push&&r.surface!=='ice'){const tx=-r.n[1],ty=r.n[0],fwd=L?Math.sign(L.goal.x-L.start.x)||1:1,dir=Math.sign(tx*fwd)||1;
-      if(input.push>0&&Math.hypot(r.vx,r.vy)<PUSH.max){ax+=tx*dir*PUSH.acc*input.push;ay+=ty*dir*PUSH.acc*input.push;}
-      else if(input.push<0){const k=1-PUSH.brake*h*-input.push;r.vx*=k;r.vy*=k;}}
+    const fwd=L?Math.sign(L.goal.x-L.start.x)||1:1;
+    if(r.grounded&&input.push&&r.surface!=='ice'){const tx=-r.n[1],ty=r.n[0],dir=Math.sign(tx*fwd)||1,along=(r.vx*tx+r.vy*ty)*dir;
+      if(input.push>0){if(along<PUSH.max){ax+=tx*dir*PUSH.acc*input.push;ay+=ty*dir*PUSH.acc*input.push;}}
+      else if(along>30){const k=1-PUSH.brake*h*-input.push;r.vx*=k;r.vy*=k;}       // brake…
+      else if(along>-PUSH.back){ax+=tx*dir*PUSH.acc*input.push;ay+=ty*dir*PUSH.acc*input.push;}}   // …then roll backward
+    else if(!r.grounded&&input.push&&r.sling<0&&r.slingFly>=SLING.float){const along=r.vx*fwd*Math.sign(input.push);
+      if(along<PUSH.airMax)ax+=fwd*PUSH.air*input.push;}
     // boost pads: drive speed along the pad up to BOOST.speed while grounded on it
     if(r.grounded&&w.boosts.length){let on=-1;for(let bi=0;bi<w.boosts.length;bi++){const b=w.boosts[bi],[cx,cy]=closest(r.x,r.y,b.ax,b.ay,b.bx,b.by);
         if(Math.hypot(r.x-cx,r.y-cy)<=BOOST.reach&&Math.abs(r.z)<=WIDTH.block+R*.4){on=bi;const va=r.vx*b.tx+r.vy*b.ty;if(va<BOOST.speed){const dv=Math.min(BOOST.acc*h,BOOST.speed-va);ax+=b.tx*dv/h;ay+=b.ty*dv/h;}break;}}
@@ -195,7 +213,9 @@ export function step(w,L,input=NO_INPUT){
     // from outside: if you were already deep inside it before this substep (you fell past it
     // off its side and then steered back), you keep falling instead of being popped out.
     let contact=null;
-    for(let it=0;it<2;it++)for(const si of near(w,r.x,r.y)){const s=w.segs[si];if(r.x<s.x0||r.x>s.x1||r.y<s.y0||r.y>s.y1||Math.abs(r.z)>s.hw+R*.4)continue;
+    for(let it=0;it<2;it++)for(const si of near(w,r.x,r.y)){const s=w.segs[si];if(r.x<s.x0||r.x>s.x1||r.y<s.y0||r.y>s.y1)continue;
+      // the wider window only for something new (landing, or rolling onto another surface), or while still settling onto it
+      if(Math.abs(r.z)>s.hw+R*.4+(!r.grounded||s.owner!==r.owner||r.catchT>0?slack:0))continue;
       if(s.crumble!=null&&w.crumbles[s.crumble].gone)continue;
       const[cx,cy]=closest(r.x,r.y,s.ax,s.ay,s.bx,s.by),dx=r.x-cx,dy=r.y-cy,d=Math.hypot(dx,dy),rad=R+s.th;
       if(d>=rad||d<1e-6)continue;
@@ -208,16 +228,18 @@ export function step(w,L,input=NO_INPUT){
     // a sling releasing inside a ledge), stacked push-outs would otherwise turn into a launch at thousands/s.
     if(contact){const s0=Math.hypot(pvx,pvy)+1,s1=Math.hypot(r.vx,r.vy);if(s1>s0){const k=s0/s1;r.vx*=k;r.vy*=k;}}
     if(contact){const[nx,ny,s]=contact,vn=r.vx*nx+r.vy*ny,tx=r.vx-nx*vn,ty=r.vy-ny*vn,f=s.kind==='ice'?0:FRICTION;r.vx-=tx*f;r.vy-=ty*f;
-      if(ny<-.2){grounded=true;r.n=[nx,ny];r.groundHw=s.hw;r.groundKind=s.kind==='line'?'line':'block';r.surface=s.kind;r.owner=s.owner;}}   // walls/ceilings aren't ground
+      if(ny<-.2){if(!r.grounded||r.owner!==s.owner||r.catchT>0){r.catchT=Math.max(r.catchT,!r.grounded||r.owner!==s.owner?CATCH.t:0);r.catchHw=s.hw;}
+        grounded=true;r.n=[nx,ny];r.groundHw=s.hw;r.groundKind=s.kind==='line'?'line':'block';r.surface=s.kind;r.owner=s.owner;}}   // walls/ceilings aren't ground
     r.a+=r.vx*h/R;
   }
   if(!Number.isFinite(r.x+r.y+r.vx+r.vy)){r.vx=r.vy=0;r.x=Number.isFinite(r.x)?r.x:L.start.x;r.y=Number.isFinite(r.y)?r.y:H+100;}
-  r.grounded=grounded;r.speed=Math.hypot(r.vx,r.vy);
+  r.grounded=grounded;r.speed=Math.hypot(r.vx,r.vy);r.windIn=windIn;
+  if(inWind&&!r.offSide){r.catchT=CATCH.t;r.catchHw=WIND.hw;}
   if(onRope&&grounded&&r.groundKind==='rope')r.surface='rope';else if(!grounded)r.surface=null;
   if(grounded){if(!wasGrounded&&r.airT>.15)w.events.push({type:'land',x:r.x,y:r.y,t:w.t,v:r.speed});r.coyote=0;r.airT=0;r.jumped=false;r.offSide=false;}
   else{r.coyote+=DT;r.airT+=DT;
     // Lost the surface because you steered past its edge (not by jumping or rolling off its end).
-    if(!r.offSide&&!r.jumped&&r.airT<.1&&Math.abs(r.z)>r.groundHw+R*.4){r.offSide=true;r.offY=r.y;r.coyote=1e9;}}
+    if(!r.offSide&&!r.jumped&&r.airT<.1&&Math.abs(r.z)>r.groundHw+R*.4+(r.catchT>0?CATCH.z:0)){r.offSide=true;r.offY=r.y;r.coyote=1e9;}}
 
   // jump: buffered press + coyote time, pushed off the surface and up
   if(r.jumpBuf>0&&r.coyote<=JUMP.coyote){let jx=r.n[0]*.5,jy=r.n[1]*.5-.5;const l=Math.hypot(jx,jy)||1;jx/=l;jy/=l;
@@ -257,34 +279,32 @@ function capture(w,r){
   for(let i=0;i<w.slings.length;i++){const sl=w.slings[i];
   if(i===r.slingLast&&(w.t-r.slingLastT<SLING.cooldown||!r.slingLeft))continue;
   if((w.slingCatches[i]||0)>=SLING.maxCatches)continue;
-  const dx=r.x-sl.x,dy=r.y-sl.y,d=Math.hypot(dx,dy);if(d>=sl.rc||Math.abs(r.z)>=sl.rc)continue;
+  // Swept: the closest point of this frame's motion, so a fast rider grazing the ring can't skip it.
+  const px=w.prevX??r.x,py=w.prevY??r.y,[qx,qy]=closest(sl.x,sl.y,px,py,r.x,r.y),dx=qx-sl.x,dy=qy-sl.y,d=Math.hypot(dx,dy);
+  if(d>=sl.rc||Math.abs(r.z)>=sl.rc+(r.offSide?0:CATCH.z))continue;
   const sp=Math.hypot(r.vx,r.vy),th=d>1e-6?Math.atan2(dy,dx):Math.atan2(-r.vy,-r.vx),cr=dx*r.vy-dy*r.vx,dir=cr<0?-1:1;
   const exitTh=sl.a-dir*Math.PI/2;let sweep=wrap(dir*(exitTh-th));if(sweep<SLING.minSweep)sweep+=TAU;
   Object.assign(r,{sling:i,slingDir:dir,slingAng:th,slingSwept:0,slingSweep:sweep,slingK:0,slingSpeed:clamp(Math.max(sp,SLING.minSpeed),0,SLING.maxSpeed),
-    grounded:false,surface:null,groundKind:null,coyote:1e9,jumpBuf:0,jumped:false,offSide:false,lineT:0,swayT:0,sway:0,boost:-1});
+    grounded:false,surface:null,groundKind:null,coyote:1e9,jumpBuf:0,jumped:false,offSide:false,lineT:0,swayT:0,sway:0,boost:-1,windSkip:[...r.windIn]});
   r.x=sl.x+sl.ro*Math.cos(th);r.y=sl.y+sl.ro*Math.sin(th);
   w.slingCatches[i]=(w.slingCatches[i]||0)+1;w.events.push({type:'sling',i,x:r.x,y:r.y,t:w.t});return;}}
+// The orbit spirals in over its last `SPIRAL` rad, so the release is at the sling's centre, heading along the aim:
+// the fling then follows the dotted preview line exactly (it used to leave from the ring's edge, ro to one side).
+const SPIRAL=1.6;
 function orbit(w,r){const sl=w.slings[r.sling],s=r.slingSpeed,om=s/sl.ro;let dth=om*DT,done=false;
   if(r.slingSwept+dth>=r.slingSweep){dth=r.slingSweep-r.slingSwept;done=true;}
   r.slingSwept+=dth;r.slingAng+=r.slingDir*dth;r.slingK=r.slingSweep?r.slingSwept/r.slingSweep:1;
-  r.x=sl.x+sl.ro*Math.cos(r.slingAng);r.y=sl.y+sl.ro*Math.sin(r.slingAng);
-  const tx=-Math.sin(r.slingAng)*r.slingDir,ty=Math.cos(r.slingAng)*r.slingDir;r.vx=tx*s;r.vy=ty*s;r.speed=s;
+  const left=r.slingSweep-r.slingSwept,span=Math.min(SPIRAL,r.slingSweep),u=clamp(left/span,0,1),rr=sl.ro*u*u*(3-2*u);
+  const ox=r.x,oy=r.y;r.x=sl.x+rr*Math.cos(r.slingAng);r.y=sl.y+rr*Math.sin(r.slingAng);
+  const tx=-Math.sin(r.slingAng)*r.slingDir,ty=Math.cos(r.slingAng)*r.slingDir;
+  if(rr>2){r.vx=tx*s;r.vy=ty*s;}else{r.vx=(r.x-ox)/DT;r.vy=(r.y-oy)/DT;}r.speed=s;
   r.z*=Math.exp(-SLING.zEase*DT);r.vz=0;r.a+=s*DT/R;r.airT+=DT;
-  // The release point sits ro from the centre; placed against a ledge it can land inside rock, where the rider would
-  // be stuck (collisions skip surfaces you start inside). Then release from the centre, where the player put the sling.
-  if(done&&!clearAt(w,r.x,r.y)&&clearAt(w,sl.x,sl.y)){r.x=sl.x;r.y=sl.y;}
-  if(done){const v=SLING.launch;r.vx=Math.cos(sl.a)*v;r.vy=Math.sin(sl.a)*v;r.speed=v;
+  if(done){r.x=sl.x;r.y=sl.y;const v=SLING.launch;r.vx=Math.cos(sl.a)*v;r.vy=Math.sin(sl.a)*v;r.speed=v;
     w.events.push({type:'slingOut',i:r.sling,x:r.x,y:r.y,t:w.t,v});r.slingLast=r.sling;r.slingLastT=w.t;r.slingLeft=false;r.sling=-1;r.slingK=1;r.slingFly=0;}}
-// Is (x,y) open air for the rider: outside every solid polygon and not touching any surface?
-function inPoly(p,x,y){let c=false;for(let i=0,j=p.length-1;i<p.length;j=i++){const[xi,yi]=p[i],[xj,yj]=p[j];if((yi>y)!==(yj>y)&&x<(xj-xi)*(y-yi)/(yj-yi)+xi)c=!c;}return c;}
-function clearAt(w,x,y){const L=w.level;if(L){if(L.blocks.some(p=>inPoly(p,x,y))||(L.ice||[]).some(p=>inPoly(p,x,y)))return false;
-    if((L.crumble||[]).some((p,i)=>!w.crumbles[i].gone&&inPoly(p,x,y)))return false;}
-  for(const si of near(w,x,y)){const s=w.segs[si];if(s.crumble!=null&&w.crumbles[s.crumble].gone)continue;const[cx,cy]=closest(x,y,s.ax,s.ay,s.bx,s.by);if(Math.hypot(x-cx,y-cy)<R+s.th)return false;}
-  return true;}
 // Preview of a sling's throw: the release point and the ballistic arc for t seconds, as the physics does it.
-// dir is the turn direction (+1 = clockwise on screen, i.e. increasing angle with y down; the release point
-// sits on the side of the ring that depends on it). The side view draws this so it matches exactly.
-export function slingPreview(sl,speed=450,t=.45,dir=1){const ro=sl.ro??SLING.ro,a=sl.a,th=a-dir*Math.PI/2;
+// The rider is released from the sling's centre (dir 0, the default), so this is exactly the flight. dir ±1 starts
+// the line ro to either side of the ring instead (the old release point; kept for API compatibility).
+export function slingPreview(sl,speed=450,t=.45,dir=0){const ro=dir?sl.ro??SLING.ro:0,a=sl.a,th=a-dir*Math.PI/2;
   const x0=sl.x+ro*Math.cos(th),y0=sl.y+ro*Math.sin(th),v=SLING.launch;   // fixed launch speed; `speed` kept for API compatibility
   // Same integration as the physics (gravity eased in over SLING.float), stepped at the physics substep.
   const h=DT/SUB,n=Math.round(t/h),pts=[[x0,y0]];let x=x0,y=y0,vx=Math.cos(a)*v,vy=Math.sin(a)*v;
