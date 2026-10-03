@@ -14,6 +14,8 @@ import {LEVELS,CHAPTERS} from '../src/levels.js';
 import {createSide} from '../src/side.js';
 import {createRide} from '../src/ride.js';
 import {createAudio} from '../src/audio.js';
+import TRIALS from '../src/trials.js';
+import {createMaker,blank} from '../src/maker.js';
 
 const FW=1920,FH=1080,FPS=60,DTF=1/FPS;
 const GW=1920,GH=1200,PX=GW/P.W;              // the game sheet, 16:10, rendered at 2.4 px per design unit
@@ -84,8 +86,9 @@ function pats(ink){const dot=(color,step,rad)=>{const c=cv(step*2,step*2),x=c.ge
   [[step/2,step/2],[step*1.5,step*1.5]].forEach(([a,b])=>{x.beginPath();x.arc(a,b,rad,0,TAU);x.fill();});return g.createPattern(c,'repeat');};
   return{light:dot(ink.light,7,1.9),lightDense:dot(ink.light,6,2.4),mid:dot(ink.mid,6,1.7),key:dot(ink.key,5,1.6)};}
 class Shot{
-  constructor(li,items=[]){const L=this.L=LEVELS[li];this.li=li;const ink=inksOf(L);
+  constructor(li,items=[]){const L=this.L=typeof li==='object'?li:LEVELS[li];this.li=typeof li==='object'?-1:li;const ink=inksOf(L);
     this.S={li,level:L,items:JSON.parse(JSON.stringify(items)),tool:L.tools[0],mode:'edit',stroke:null,ink,pat:pats(ink),ghost:null,falls:0,
+      view:{x:0,y:0,k:1},make:{piece:'slab',material:'solid',snap:true},trial:null,
       settings:{fov:90,bob:false,chase:CHASE,reducedMotion:false,assist:0}};
     this.side=createSide({canvas:cv(10,10),getState:()=>this.S,hooks:{}});
     this.ride=createRide();this.world=null;this.pen=null;}
@@ -93,7 +96,7 @@ class Shot{
   startRide(policy='auto'){this.policy=policy;this.world=P.build(this.L,this.S.items,{assist:0});this.S.mode='ride';this.S.stroke=null;this.pen=null;
     this.ride.reset(this.world,this.L,this.S);this.ev=0;this.rid=++RID;this.stopped=false;}
   step(quiet=false){const w=this.world;
-    if(w.status==='run'){const inp=this.policy==='auto'?P.autopilot(w,this.L,{drops:true}):this.policy==='none'?P.NO_INPUT:this.policy(w);P.step(w,this.L,inp);}
+    if(w.status==='run'){const inp=this.policy==='auto'?P.autopilot(w,this.L,{drops:true}):this.policy==='none'?P.NO_INPUT:this.policy(w,this.L);P.step(w,this.L,inp);}
     while(this.ev<w.events.length){const e=w.events[this.ev++];if(!quiet)sfx('event',{...e});}
     if(quiet)return;
     if(w.status==='run')sfx('ride',snap(w,this.rid),DTF);else if(!this.stopped){this.stopped=true;sfx('stopRide');}}
@@ -170,7 +173,7 @@ function deskBg(){ox.setTransform(1,0,0,1,0,0);ox.globalAlpha=1;ox.globalComposi
 // the level's slug line above the sheet, the wordmark, and the ink meter below it
 function sheetFurniture(shot,alpha=1){if(alpha<=0)return;const L=shot.L,ink=shot.ink;ox.save();ox.globalAlpha=alpha;
   ox.fillStyle=ink.key;ox.font=`24px ${MONO}`;ox.textBaseline='alphabetic';ox.textAlign='left';
-  ox.fillText(`LEVEL ${String(shot.li+1).padStart(2,'0')} · ${L.name.replace(/ \(prototype\)/,'').toUpperCase()}`,440,92);
+  ox.fillText(shot.label||`LEVEL ${String(shot.li+1).padStart(2,'0')} · ${L.name.replace(/ \(prototype\)/,'').toUpperCase()}`,440,92);
   ox.textAlign='right';ox.font=`900 40px ${STENCIL}`;ox.letterSpacing='3px';ox.fillStyle=ink.mid;ox.fillText('RISO RIDER',1863,94);ox.fillStyle=ink.key;ox.fillText('RISO RIDER',1860,92);ox.letterSpacing='0px';
   // ink meter: the colour bar, emptying right to left
   const S=shot.S,used=P.inkUsed(S.items)+(S.stroke?P.itemCost(S.stroke):0),left=clamp(1-used/L.ink,0,1),x0=440,x1=1560,y=1030,h=22,n=34;
@@ -254,7 +257,7 @@ function eventT(id,items,type,policy=AUTO){const L=LEVELS[L_(id)],w=P.build(L,it
 const lvlTag=sh=>`level ${String(sh.li+1).padStart(2,'0')} · ${sh.L.name.toLowerCase()}`;
 
 // A "draw it, swoop, ride it" shot. opts: plan, swoopAt, swoopMs, policy, rollInSwoop, cap(lt, st) for captions.
-function drawRideScene(name,dur,id,opts){scene(name,dur,()=>{const sh=new Shot(L_(id));
+function drawRideScene(name,dur,id,opts){scene(name,dur,()=>{const sh=new Shot(opts.level?opts.level():L_(id));if(opts.label)sh.label=opts.label;
     return{sh,plan:opts.plan(sh).map(p=>({...p})),rideAt:opts.swoopAt+opts.swoopMs/1000,rode:false};},
   (lt,st)=>{const sh=st.sh;curInk=sh.ink;
     if(lt<opts.swoopAt){drawPlan(sh,st.plan,lt);sh.drawSide(T);deskBg();sheetFurniture(sh);place(scr,SIDE);}
@@ -308,7 +311,6 @@ toolScene('slings','keyhole',()=>[{item:sol('keyhole',1)[0],t0:.3}],.9,['SLINGS'
 
 // 5 · THE PAGE FIGHTS BACK — ice, boosts, spikes, from behind the ball (30.5 – 38 s)
 const CLIPS=[
-  {id:'ski-jump',items:sol('ski-jump',0),at:()=>.3,word:'ICE.'},
   {id:'afterburner',items:sol('afterburner',2),at:()=>0,word:'BOOSTS.'},
   {id:'cavern',items:sol('cavern',1),at:()=>0,word:'SPIKES.'}];
 const CD=2.5;
@@ -341,7 +343,6 @@ scene('answers',8.5,()=>({tiles:ANS.sols.map(([k,label],i)=>{const items=sol(ANS
 // 7 · FAILS — you will fall. a lot. (46.5 – 54 s)
 const FAILS=[
   {id:'canyon',items:sol('canyon'),policy:w=>({steer:w.t>.7?1:0,jump:false,jumpHeld:false,push:0}),why:['Fell off the tightrope.','fall']},
-  {id:'floor-gives-way',items:[],policy:'none',why:['Popped!','pop']},
   {id:'low-ceiling',items:sol('low-ceiling',2),policy:w=>({steer:0,jump:w.t>1.05&&w.t<1.1,jumpHeld:true,push:0}),why:['Popped!','pop']}];
 const FD=2.5,FX=1.15;      // each fail: its length, and how far into it the crash lands
 FAILS.forEach((F,i)=>scene('fail'+i,FD,()=>{const at=eventT(F.id,F.items,null,F.policy==='auto'?AUTO:F.policy);const sh=new Shot(L_(F.id),F.items);
@@ -354,7 +355,7 @@ FAILS.forEach((F,i)=>scene('fail'+i,FD,()=>{const at=eventT(F.id,F.items,null,F.
   const tot=i*FD+lt,o=ride?{solid:.94}:{};
   stampText('YOU WILL',70,ride?200:560,{size:150,maxW:360,age:tot-.05,rot:-.05,...o});
   stampText('FALL.',70,ride?360:720,{size:190,maxW:360,age:tot-.3,rot:-.04,...o});
-  if(i===2){stampText('A LOT.',80,ride?540:900,{size:170,maxW:360,age:lt-.15,rot:.03,...o});}}));
+  if(i===FAILS.length-1){stampText('A LOT.',80,ride?540:900,{size:170,maxW:360,age:lt-.15,rot:.03,...o});}}));
 
 // 8 · FIFTY SHEETS — every level is its own sheet, in its own inks; one lands on the desk every beat (53 – 58.5 s)
 scene('sheets',5.5,()=>{const r=rng(42);return{sheets:DEAL.map(i=>{const items=LEVELS[i].solutions[0],sh=new Shot(i,items);
@@ -381,7 +382,96 @@ drawRideScene('finale',9,'last-proof',{swoopAt:1.25,swoopMs:1100,
       const t0=st.winT+.18;if(Math.abs(lt-t0)<DTF/2)sfx('stamp',0);for(let i=0;i<st.stars;i++)if(Math.abs(lt-(t0+.38+i*.3))<DTF/2)sfx('stamp',i+1);
       cleared(lt,t0,st.stars,st.sh.ink);}}});
 
-// 10 · END CARD (68.5 – 74.5 s)
+// 10 · TIME TRIALS — a long course, the clock, checkpoint splits, and the ghost of a faster run to chase.
+// Real runs: you take the high bridge, the ghost took the bridge and the hops (both proven routes in tools/trials.mjs).
+// The ghost is your best run: the same line, 0.3 s quicker, so it stays in view just ahead of you.
+const TRI={id:'t-ice-chute',me:'high bridge',ahead:.3,from:2.45,n:3};
+const fmtT=t=>t.toFixed(2);
+// A scripted route (tools/trials.mjs routePolicy): the autopilot, plus a jump at each listed x.
+function routePolicy(route){const xs=[...(route.jump||[])].sort((a,b)=>a-b);let k=0;
+  return(w,L)=>{const a=P.autopilot(w,L),r=w.rider;let jump=a.jump;while(k<xs.length&&r.x>=xs[k]){k++;jump=true;}return{...a,jump,jumpHeld:jump||r.jumped};};}
+function recordRun(L,route){const w=P.build(L,[]),pol=routePolicy(route),rec=[];let n=0;
+  while(w.status==='run'&&w.t<60){P.step(w,L,pol(w,L));if(++n%2===0){const r=w.rider;rec.push([w.t,r.x,r.y,r.z,r.grounded?0:1]);}}
+  return{rec,cps:w.events.filter(e=>e.type==='check').map(e=>e.t),t:w.t};}
+const MEDALS=['bronze','silver','gold','author'];
+// The game's clock: big stencil numbers, mid ink out of register, and the checkpoint split typed under it.
+function clock(t,split,cls,ink){if(DRY)return;ox.save();ox.textAlign='center';ox.textBaseline='alphabetic';ox.font=`900 104px ${STENCIL}`;ox.letterSpacing='4px';
+  let w=ox.measureText('00.00').width;if(split){ox.save();ox.font=`40px ${MONO}`;ox.letterSpacing='0px';w=Math.max(w,ox.measureText(split).width);ox.restore();}
+  ox.fillStyle=PAPER;ox.globalAlpha=.86;ox.fillRect(FW/2-w/2-26,40,w+52,split?182:132);ox.globalAlpha=1;
+  ox.fillStyle=ink.mid;ox.fillText(fmtT(t),FW/2+5,146);ox.fillStyle=ink.key;ox.fillText(fmtT(t),FW/2,142);ox.letterSpacing='0px';
+  if(split){ox.font=`40px ${MONO}`;ox.letterSpacing='0px';ox.fillStyle=ink.key;ox.fillText(split,FW/2,200);}ox.restore();}
+// The finish: the time stamped where CLEARED! goes, then the medal stamps land one at a time (inked when earned).
+function finishStamp(lt,t0,t,L,ink){if(lt<t0)return;const a=lt-t0;
+  if(!DRY){ox.save();ox.fillStyle=PAPER;ox.globalAlpha=.5;ox.fillRect(0,0,FW,FH);ox.restore();}
+  stampText(fmtT(t),960,430,{size:250,ink,age:a,rot:-.1,align:'center',frame:true,spacing:.04,off:.04,base:'middle',mute:true});
+  const ms=MEDALS.filter(k=>L.medals[k]),got=k=>t<=L.medals[k]+1e-9;if(DRY)return;
+  ox.save();ox.font=`800 44px ${STENCIL}`;ox.letterSpacing='7px';const ws=ms.map(k=>ox.measureText(k.toUpperCase()).width+52),gap=26,tot=ws.reduce((s,v)=>s+v,0)+gap*(ms.length-1);let x=960-tot/2;
+  ms.forEach((k,i)=>{const ta=a-.38-i*.28,w=ws[i];if(ta>=0){const down=ta<2/FPS;ox.save();ox.translate(x+w/2,668+[-6,4,-3,5][i]);ox.rotate([-.08,.05,-.04,.06][i]);if(down)ox.scale(1.06,1.06);
+      ox.globalCompositeOperation='multiply';if(down)ox.filter='brightness(.62)';ox.textAlign='center';ox.textBaseline='middle';
+      if(got(k)){ox.fillStyle=ink.key;ox.fillRect(-w/2,-36,w,72);ox.fillStyle=PAPER;ox.globalCompositeOperation='source-over';ox.fillText(k.toUpperCase(),3,3);}
+      else{ox.setLineDash([10,8]);ox.strokeStyle=ink.key;ox.lineWidth=4;ox.strokeRect(-w/2,-36,w,72);ox.fillStyle=ink.key;ox.fillText(k.toUpperCase(),3,3);}
+      ox.restore();}x+=w+gap;});ox.restore();}
+scene('trials',10,()=>{const L={...TRIALS.find(t=>t.id===TRI.id),sheet:`TRIAL ${String(TRI.n).padStart(2,'0')}`},R=n=>L.routes.find(r=>r.name===n);
+    const run=recordRun(L,R(TRI.me)),ghost={rec:run.rec.map(q=>[q[0]-TRI.ahead,...q.slice(1)]),cps:run.cps.map(t=>t-TRI.ahead)},sh=new Shot(L);sh.S.trial={offset:0,ghost:{rec:ghost.rec}};sh.startRide(routePolicy(R(TRI.me)));sh.preroll(TRI.from);
+    return{sh,ghost,cps:0,split:'',cls:'',splitAt:-9,winT:null};},
+  (lt,st)=>{const sh=st.sh,w=sh.world,L=sh.L;curInk=sh.ink;sh.step();
+    const n=w.checks.filter(c=>c.got).length;if(n>st.cps){st.cps=n;const bt=st.ghost.cps[n-1],d=w.t-bt;st.split=`CP ${n} · ${fmtT(w.t)} · ${d<=0?'−':'+'}${Math.abs(d).toFixed(2)}`;st.cls=d<=0?'ahead':'behind';st.splitAt=lt;sfx('stamp',1);}
+    sh.drawRide(T);deskBg();place(scr,FULL);
+    if(w.status==='win'&&st.winT==null){st.winT=lt;}
+    if(st.winT==null){clock(w.t,lt-st.splitAt<2.2?st.split:'',st.cls,sh.ink);
+      stampText('TIME',70,240,{size:150,maxW:360,age:lt-.05,rot:-.05,solid:.94});stampText('TRIALS.',74,400,{size:150,maxW:420,age:lt-.3,rot:-.04,solid:.94});
+      typeText('chase the ghost of your best run.',78,480,{size:34,bg:.9,progress:typeP(lt,.9,33,36)});
+      if(lt>3.6)typeText('checkpoints · splits · medals',78,536,{size:34,bg:.9,progress:typeP(lt,3.6,29,36)});}
+    else{const t0=st.winT+.18;if(Math.abs(lt-t0)<DTF/2)sfx('stamp',0);MEDALS.forEach((k,i)=>{if(Math.abs(lt-(t0+.38+i*.28))<DTF/2)sfx('stamp',Math.min(3,i+1));});finishStamp(lt,t0,w.t,L,sh.ink);}});
+
+// 11 · MAKE YOUR OWN — the maker: pieces placed on the grid one by one, then the whole sheet reprinted in new inks.
+const MK={inks:[['Coral','Violet','Federal Blue'],['Yellow','Fluorescent Pink','Blue']],swap:4.2,wipe:.45};
+const MKP=[{at:.55,dur:.55,kind:'slab',a:[150,150],b:[330,250]},{at:1.45,dur:.45,kind:'rope',a:[380,380],b:[480,380]},
+  {at:2.2,dur:.4,kind:'box',a:[640,382],b:[700,486]},{at:2.95,kind:'drop',a:[516,370]}];
+function slabPoly(a,b){const l=Math.hypot(b[0]-a[0],b[1]-a[1])||1,ux=(b[0]-a[0])/l,uy=(b[1]-a[1])/l;let nx=-uy,ny=ux;if(ny<0){nx=-nx;ny=-ny;}return[a,b,[b[0]+nx*22,b[1]+ny*22],[a[0]+nx*22,a[1]+ny*22]];}
+// The level as it stands at local time lt (pieces still being dragged are partly drawn); returns the pen point.
+function buildTo(L,lt){const base=blank('puzzle');L.blocks=base.blocks.map(p=>p.map(q=>q.slice()));L.fixed=[];L.drops=[];let pen=null;
+  for(const pc of MKP){if(lt<pc.at)continue;const k=pc.dur?ease(clamp((lt-pc.at)/pc.dur,0,1)):1,b=pc.b?[lerp(pc.a[0],pc.b[0],k),lerp(pc.a[1],pc.b[1],k)]:pc.a;
+    if(pc.dur&&k<1)pen=b;else if(!pc.dur&&lt<pc.at+.15)pen=pc.a;
+    if(pc.kind==='slab'&&k>.02)L.blocks.push(slabPoly(pc.a,b));
+    else if(pc.kind==='box'&&k>.05)L.blocks.push([[pc.a[0],pc.a[1]],[b[0],pc.a[1]],[b[0],b[1]],[pc.a[0],b[1]]]);
+    else if(pc.kind==='rope'&&k>.05)L.fixed.push({type:'rope',a:pc.a,b});
+    else if(pc.kind==='drop')L.drops.push({x:pc.a[0],y:pc.a[1],v:25});}
+  return pen;}
+const rebound=(inks,id)=>Object.assign(blank('puzzle'),{id,name:'Rebound',sheet:'CUSTOM',bg:{scene:'cutouts',seed:41,inks}});
+const mkB=cv(GW,GH),mkx=mkB.getContext('2d');
+scene('make',7.5,()=>{const shs=MK.inks.map((inks,i)=>{const sh=new Shot(rebound(inks,'trailer-rebound-'+i));sh.S.mode='make';sh.label='MAKING · REBOUND';
+    sh.maker=createMaker({canvas:cv(10,10),getState:()=>sh.S});return sh;});return{shs,started:new Set(),ended:new Set()};},
+  (lt,st)=>{
+    for(const pc of MKP){const id=MKP.indexOf(pc),kind=pc.kind==='rope'?'rope':'line';
+      if(lt>=pc.at&&!st.started.has(id)){st.started.add(id);if(pc.dur)sfx('draw',kind,'start',0);else sfx('ui','tool');}
+      if(pc.dur&&lt>pc.at&&lt<pc.at+pc.dur)sfx('draw',kind,'move',900);
+      if(pc.dur&&lt>=pc.at+pc.dur&&!st.ended.has(id)){st.ended.add(id);sfx('draw',kind,'end',0);sfx('ui','tool');}}
+    if(Math.abs(lt-MK.swap)<DTF/2)sfx('ui','slip');
+    let pen=null;for(const sh of st.shs)pen=buildTo(sh.L,lt);
+    const render=sh=>{if(DRY)return;plate();try{sh.side.draw(g,T);sh.maker.draw(g,T);}catch(e){console.error(e);}if(pen)pencil(g,pen,sh.ink);finishPlate();
+      sx.fillStyle=PAPER;sx.fillRect(0,0,GW,GH);sh.sideBg();multiplyPlate();};
+    // a reprint: the new inks roll across the sheet like a drum pass
+    const k=clamp((lt-MK.swap)/MK.wipe,0,1),cur=st.shs[k>=.5?1:0];curInk=cur.ink;
+    if(!DRY){if(k<=0)render(st.shs[0]);else if(k>=1)render(st.shs[1]);
+      else{render(st.shs[0]);mkx.drawImage(scr,0,0);render(st.shs[1]);const x=GW*ease(k);sx.save();sx.beginPath();sx.rect(x,0,GW-x,GH);sx.clip();sx.drawImage(mkB,0,0);sx.restore();}}
+    if(!DRY){deskBg();sheetFurniture(cur);place(scr,SIDE);}
+    stampText('MAKE',70,330,{size:170,maxW:330,age:lt-.05,rot:-.05});stampText('YOUR',74,490,{size:170,maxW:330,age:lt-.3,rot:-.04});stampText('OWN.',74,650,{size:170,maxW:330,age:lt-.55,rot:-.05});
+    typeText('slabs, ice, spikes, boosts,',78,760,{size:34,progress:typeP(lt,1.2,26,30)});typeText('ropes, wind and slings.',78,806,{size:34,progress:typeP(lt,2.1,23,30)});
+    if(lt>=MK.swap+.2)typeText('your inks. your paper.',78,880,{size:34,progress:typeP(lt,MK.swap+.2,22,32)});});
+
+// 12 · SHARE IT — beat your own level (no beating it, no sharing), then pass its code on.
+const CODE='RR1-VVK7jtswEPyVYOpFQFlPsEyROkgXECz04NnC0aJAUn5C_x4sJcN';
+MARK.note=c=>{c.moveTo(15,11);c.arc(15,13,2.2,0,TAU);};
+drawRideScene('share',9,null,{level:()=>{const L=rebound(MK.inks[1],'trailer-rebound-1');buildTo(L,1e9);return L;},label:'TESTING · REBOUND',swoopAt:1.6,swoopMs:1100,plan:()=>[],
+  cap:(lt,st)=>{if(lt<2){const a=lt<1.6?1:1-(lt-1.6)/.4;stampText('BEAT IT',70,330,{size:150,maxW:360,age:lt-.05,rot:-.05,alpha:a});stampText('TO SHARE',74,490,{size:150,maxW:360,age:lt-.3,rot:-.04,alpha:a});stampText('IT.',74,650,{size:170,maxW:330,age:lt-.55,rot:-.05,alpha:a});}
+    const w=st.sh.world;if(w&&w.status==='win'){if(st.winT==null){st.winT=lt;st.stars=P.stars(st.sh.L,0,w.refund||0);}
+      const t0=st.winT+.18;if(Math.abs(lt-t0)<DTF/2)sfx('stamp',0);for(let i=0;i<st.stars;i++)if(Math.abs(lt-(t0+.38+i*.3))<DTF/2)sfx('stamp',i+1);
+      cleared(lt,t0,st.stars,st.sh.ink,960,400);
+      const s0=t0+1.45;if(lt>=s0){if(Math.abs(lt-s0)<DTF/2)sfx('ui','slip');slip(['Your level as a code:',CODE+'…'],'note',st.sh.ink,1150,116,clamp((lt-s0)/.15,0,1));
+        stampText('SHARE IT.',70,960,{size:120,maxW:600,age:lt-s0-.35,rot:-.04,solid:.94});}}}});
+
+// 13 · END CARD (68.5 – 74.5 s)
 scene('end',6,()=>({ink:inksOf(LEVELS[L_('the-wall')])}),(lt,st)=>{const ink=st.ink;curInk=ink;
   const line=[[470,560],[760,548],[1060,572],[1330,556]],d=dens(line,3),dk=clamp((lt-.35)/.6,0,1),n=Math.floor(dk*(d.length-1));
   if(Math.abs(lt-.35)<DTF/2)sfx('draw','line','start',0);if(lt>.35&&lt<.95)sfx('draw','line','move',1400);if(Math.abs(lt-.95)<DTF/2)sfx('draw','line','end',0);
@@ -395,7 +485,7 @@ scene('end',6,()=>({ink:inksOf(LEVELS[L_('the-wall')])}),(lt,st)=>{const ink=st.
   if(dk<1){const p=d[n];pencilAt(p,ink);}
   else{const past=lt>2.3,k=clamp((lt-2.3)/.25,0,1),x=past?lerp(d[d.length-1][0],goal[0],easeOut(k)):bp[0],y=past?lerp(d[d.length-1][1]-24,goal[1],easeOut(k)):bp[1]-24;riderBall(x,y,22,ink,past?2.3*9+k*3:lt*9);}
   stampText('DRAW IT. RIDE IT.',FW/2,720,{size:110,age:lt-1.3,align:'center',spacing:.05});
-  typeText('50 levels · free · plays in your browser · install it on your phone',FW/2,815,{size:38,progress:typeP(lt,1.9,66,80),align:'center'});
+  typeText('50 levels · 6 time trials · make and share your own · free in your browser',FW/2,815,{size:38,progress:typeP(lt,1.9,74,80),align:'center'});
   typeText('tbone94.github.io/Riso-Rider',FW/2,920,{size:56,progress:typeP(lt,2.8,28,40),align:'center'});
   if(lt>2.8+.7){ox.fillStyle=ink.mid;ox.fillRect(FW/2-420,940,840,5);}});
 function pencilAt(p,ink){ox.save();ox.translate(p[0],p[1]);ox.scale(2.2,2.2);pencil(ox,[0,0],ink);ox.restore();}
@@ -511,7 +601,9 @@ function wav(buf){const n=buf.length,ch=2,b=new DataView(new ArrayBuffer(44+n*ch
 async function upload(name,blob){const r=await fetch(`${UPLOAD}?name=${encodeURIComponent(name)}`,{method:'POST',body:blob});if(!r.ok)throw new Error('upload failed');}
 const toBlob=(c,type='image/png',q)=>new Promise(r=>c.toBlob(r,type,q));
 const show=()=>{vx.drawImage(out,0,0,view.width,view.height);};
-const raf=()=>new Promise(r=>setTimeout(r,0));
+// Yield to the browser without timers: a hidden tab throttles setTimeout to once a second, but not channel messages.
+const yieldCh=new MessageChannel(),yieldQ=[];yieldCh.port1.onmessage=()=>{const r=yieldQ.shift();if(r)r();};
+const raf=()=>new Promise(r=>{yieldQ.push(r);yieldCh.port2.postMessage(0);});
 
 // ---------- modes ----------
 async function contactSheet(every=.5,name='contact.jpg'){const cols=8,tw=320,th=180,n=Math.ceil(TOTAL/every),rows=Math.ceil(n/cols);
@@ -537,7 +629,7 @@ async function renderMP4(){
     await aenc.flush();}
   const t0=performance.now();
   await run(async(f,t)=>{const vf=new VideoFrame(out,{timestamp:Math.round(f*1e6/FPS),duration:Math.round(1e6/FPS)});venc.encode(vf,{keyFrame:f%120===0});vf.close();
-    while(venc.encodeQueueSize>6)await new Promise(r=>setTimeout(r,2));
+    while(venc.encodeQueueSize>6)await raf();
     if(f%30===0){show();status(`encoding ${t.toFixed(1)}/${TOTAL}s · ${((performance.now()-t0)/1000).toFixed(0)}s elapsed`);await raf();}});
   await venc.flush();muxer.finalize();
   const blob=new Blob([muxer.target.buffer],{type:'video/mp4'});status(`uploading ${(blob.size/1e6).toFixed(1)} MB…`);

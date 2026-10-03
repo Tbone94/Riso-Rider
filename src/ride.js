@@ -610,8 +610,10 @@ export function createRide(){
     const a=rec[lo],b=rec[hi],k=(T-a[0])/((b[0]-a[0])||1);return[a[1]+(b[1]-a[1])*k,a[2]+(b[2]-a[2])*k,a[3]+(b[3]-a[3])*k];}
   // Drawn as a hollow ball: a dashed key ring over a dotted light face, so it never reads as solid.
   function drawGhost(o,d){const q=o.q;if(!pt(q[0],q[1],q[2]))return;const cx=sx1,cy=sy1,rad=Math.max(1.5,R*ss1),f=fogOf(d)*clamp((d-14)/50,0,1);if(f<.03)return;
-    g.globalAlpha=AM*(.55*f);g.fillStyle=dots.light;g.beginPath();g.arc(cx,cy,rad,0,TAU);g.fill();
-    g.globalAlpha=AM*(f);g.strokeStyle=ink.key;g.lineWidth=clamp(rad*.14,.8,3);g.setLineDash([Math.max(1.5,rad*.35),Math.max(1.2,rad*.25)]);g.beginPath();g.arc(cx,cy,rad,0,TAU);g.stroke();g.setLineDash([]);}
+    g.globalAlpha=AM*(.75*f);g.fillStyle=dots.light;g.beginPath();g.arc(cx,cy,rad,0,TAU);g.fill();
+    const lw=clamp(rad*.22,1.4,5),dash=[Math.max(2,rad*.42),Math.max(1.5,rad*.28)];g.setLineDash(dash);
+    g.globalAlpha=AM*(.8*f);g.strokeStyle=ink.mid;g.lineWidth=lw*1.2;g.beginPath();g.arc(cx+mis,cy+mis*.7,rad,0,TAU);g.stroke();   // mid plate out of register, like every key shape
+    g.globalAlpha=AM*(f);g.strokeStyle=ink.key;g.lineWidth=lw;g.beginPath();g.arc(cx,cy,rad,0,TAU);g.stroke();g.setLineDash([]);}
 
   // A checkpoint: a ring gate across the track like the goal, but dashed, with its number on a tag above it.
   // Once passed it fades to a thin outline.
