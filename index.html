@@ -207,6 +207,12 @@ input[type=range].fader{-webkit-appearance:none;appearance:none;width:130px;heig
 #ok .down{opacity:1!important;filter:brightness(.6) saturate(1.4)}
 #ok .inked{opacity:1!important}
 #stage.thunk{translate:0 2px}
+/* ---------- the countdown: 3 · 2 · 1 · GO! stamped mid-sheet, held for 2 frames like every stamp ---------- */
+#count{position:absolute;left:50%;top:40%;z-index:2;transform:translate(-50%,-50%) rotate(var(--tilt,0deg));pointer-events:none;
+  min-width:15cqw;padding:.6cqw 2.4cqw .9cqw;border:1.1cqw double var(--key);text-align:center;color:var(--key);background:color-mix(in srgb,var(--paper) 55%,transparent);-webkit-mask:var(--inkmask) 0 0/140px;mask:var(--inkmask) 0 0/140px}
+#count b{display:block;font:900 14cqw/.9 var(--stencil);letter-spacing:.04em;text-shadow:.4cqw .3cqw 0 var(--mid)}
+#count.go b{font-size:11cqw;line-height:1.05}
+#count.down{filter:brightness(.6) saturate(1.4)}
 
 /* ---------- bottom bars ---------- */
 footer{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:6px}
@@ -250,6 +256,62 @@ body.touch #ridebar .deskonly{display:none}
 #ticket b{font:800 15px/1 var(--stencil);letter-spacing:.16em;text-transform:uppercase}
 #ticket::before{content:"";position:absolute;left:12px;top:6px;bottom:6px;border-left:1.5px dashed var(--key);opacity:.6}
 
+
+/* ---------- shelves: index tabs over the level strip (Levels · Time trials · Make · Community) ---------- */
+#shelves{position:sticky;left:0;z-index:2;display:flex;gap:4px;width:max-content;padding:0 2px;background:var(--paper) var(--grain)}
+.shelf{height:22px;padding:0 9px;border:1.5px solid var(--key);border-bottom:0;font:800 10.5px/20px var(--stencil);letter-spacing:.16em;text-transform:uppercase;white-space:nowrap;color:var(--key)}
+.shelf[aria-selected="true"]{background:var(--key);color:var(--paper)}
+.shelf:focus-visible{outline:3px dashed var(--mid);outline-offset:2px}
+#board .line{top:31px}
+#jobs{margin-top:6px}
+.job.add .blank{border-style:solid;border-width:1.5px;opacity:1;font-size:22px}
+.job.add .inks{white-space:normal;font-size:9px}
+.job .medalmark{font:800 8px/1 var(--stencil);letter-spacing:.1em;border:1px solid var(--key);padding:1px 2px}
+.job .medalmark.got{background:var(--key);color:var(--paper)}
+/* ---------- the maker: a second tray of stamps, PIECES ---------- */
+#pieces{display:flex;flex-wrap:wrap;align-items:flex-end;gap:6px 5px;padding:8px 8px 5px;border:1.5px solid var(--key);border-top:0;position:relative;max-width:100%}
+#pieces::before{content:"PIECES";position:absolute;left:6px;top:-7px;font:700 9px/1 var(--stencil);letter-spacing:.24em;background:var(--paper);padding:0 3px}
+#pieces .tool .face{width:48px}
+#makebar{align-items:flex-end}
+.mopts{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
+.mopts .zoom{display:flex;gap:4px}
+.mopts .zoom .stamp .face{min-width:34px;font-size:16px}
+html[data-lmode="puzzle"] [data-for="trial"],html[data-lmode="trial"] [data-for="puzzle"]{display:none!important}
+html[data-lmode="puzzle"] #m-zoom{display:none}
+#m-mat.off{opacity:.4}
+/* ---------- sheets: the details and share papers, built like the settings panel ---------- */
+.sheet{position:relative;border:2px solid var(--key);padding:14px 18px 12px;display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:10px 34px;align-items:center}
+.sheet .screw{position:absolute;width:7px;height:7px;border:1.5px solid var(--key);border-radius:50%}
+.sheet .screw::after{content:"";position:absolute;left:0;right:0;top:1.75px;border-top:1.5px solid var(--key);transform:rotate(35deg)}
+.sheet .screw.a{left:4px;top:4px}.sheet .screw.b{right:4px;bottom:4px}
+.sheet .ctl.wide{grid-column:1/-1}
+.sheet .note,.sheet>p{font:13px/1.35 var(--mono);grid-column:1/-1;margin:0}
+.sheet .row{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.sheet .grp{flex-wrap:wrap;justify-content:flex-end;min-width:0}
+.sheet .grp.inks{gap:4px}.sheet .grp.inks select{max-width:7.6em;min-width:0}
+input.typed{flex:1;min-width:0;margin-left:12px;padding:4px 2px 3px;border:0;border-bottom:1.5px solid var(--key);border-radius:0;background:transparent;color:var(--key);font:15px/1.2 var(--mono)}
+input.typed::placeholder{color:var(--key);opacity:.5}
+input.typed:focus-visible,select.window:focus-visible,#sharecode:focus-visible{outline:3px dashed var(--mid);outline-offset:2px}
+select.window{-webkit-appearance:none;appearance:none;border:0;border-radius:0;cursor:pointer;font:13px/1 var(--mono);max-width:12em}
+.switch.multi span{cursor:pointer;min-width:0}
+#sharecode{grid-column:1/-1;width:100%;resize:vertical;min-height:4.4em;padding:7px 8px;border:1.5px dashed var(--key);border-radius:0;background:var(--paper);color:var(--key);font:12px/1.35 var(--mono);word-break:break-all}
+/* testing your own level: a slip in the title row with the way back */
+#testbar{display:flex;align-items:center;gap:10px;padding:4px 6px 4px 10px;border:1.5px solid var(--key);font:800 12px/1 var(--stencil);letter-spacing:.16em;text-transform:uppercase}
+/* ---------- time trials: the medal strip (edit), the clock (ride), medals on the win stamp ---------- */
+#medals{flex:1 1 100%;display:flex;flex-wrap:wrap;align-items:center;gap:6px}
+.medal{display:inline-flex;align-items:baseline;gap:6px;height:26px;padding:0 8px;border:2px solid var(--key);font:800 11px/22px var(--stencil);letter-spacing:.16em;text-transform:uppercase;color:var(--key);-webkit-mask:var(--inkmask) 0 0/140px;mask:var(--inkmask) 0 0/140px}
+.medal i{font:13px/22px var(--mono);font-style:normal;letter-spacing:0;text-transform:none}
+.medal.author{border:4px double var(--key);line-height:18px}.medal.author i{line-height:18px}
+.medal.got{background:var(--key);color:var(--paper)}
+.medal.best{border-style:dashed}
+#clock{position:absolute;left:50%;top:6px;transform:translateX(-50%);text-align:center;color:var(--key)}
+#clock b{display:block;font:900 34px/1 var(--stencil);letter-spacing:.04em;text-shadow:2px 1.5px 0 var(--mid);font-variant-numeric:tabular-nums}
+#clock span{display:block;min-height:1.2em;font:14px/1.2 var(--mono);margin-top:2px}
+#clock span.ahead{color:var(--key)}#clock span.behind{color:var(--mid)}
+#ok .okmedals{display:flex;gap:1.6cqw;margin-top:2cqw}
+#ok .okmedals span{padding:.5cqw 1.2cqw;border:.35cqw solid var(--key);font:800 2.3cqw/1 var(--stencil);letter-spacing:.14em;color:var(--key);background:color-mix(in srgb,var(--paper) 55%,transparent);-webkit-mask:var(--inkmask) 0 0/140px;mask:var(--inkmask) 0 0/140px}
+#ok .okmedals span.got{opacity:0;background:var(--key);color:var(--paper)}
+#ok .okmedals span.miss{border-style:dashed}
 @media (max-width:720px){
   .job{width:70px;padding:5px 4px 3px}.job canvas,.job .blank{width:62px;height:39px}#jobs{gap:8px}
   #refund b{font-size:16px}#refund span{font-size:10px}
@@ -275,6 +337,9 @@ body.touch #ridebar .deskonly{display:none}
   #ticket{font-size:12px;flex:1 1 100%}
   #winbar .stamp{flex:1}#winbar .stamp .face{width:100%}
   #panel{gap:10px 16px;padding:12px 12px 10px}
+  .sheet{grid-template-columns:1fr;gap:10px;padding:12px 12px 10px}
+  #pieces .tool .face{width:42px}#pieces .tool .nm{font-size:9px;letter-spacing:.1em}
+  #clock b{font-size:24px}#clock span{font-size:11px}
 }
 @media (prefers-reduced-motion:reduce){#printing .track{animation:none}}
 /* ============ phone game mode: landscape, full screen, no page scroll ============
@@ -365,6 +430,29 @@ html.gm #ticket::before{left:9px}
 html.gm #winbar .stamp{height:46px;width:100%}
 html.gm #winbar .stamp .face{width:100%;padding:0;font-size:13px}
 html.gm #winbar:has(#next[hidden]) #retry{grid-column:1/-1}
+/* maker in game mode: pieces bottom-left in two columns, options top-centre, actions bottom-right */
+html.gm #makebar{display:contents}
+html.gm #makebar .spacer{display:none}
+html.gm #pieces{position:fixed;z-index:8;left:calc(var(--sl) + 8px);bottom:calc(var(--sb) + 8px + var(--lift,0px));display:grid;grid-auto-flow:column;grid-template-rows:auto;gap:4px;padding:12px 5px 5px;background:var(--paper) var(--grain);border:1.5px solid var(--key)}
+@media (max-width:760px){html.gm #pieces{grid-template-rows:auto auto}}
+html.gm #pieces .tool .face{width:44px;height:32px}
+html.gm #pieces .tool .nm{display:none}
+html.gm .mopts{position:fixed;z-index:8;top:calc(var(--st) + 6px);left:50%;transform:translateX(-50%);flex-direction:row;align-items:center;background:var(--paper) var(--grain);padding:4px;border:1.5px solid var(--key)}
+html.gm[data-mode="make"] #barrow{display:none}
+html.gm #makebar .acts .stamp{height:40px}
+html.gm #makebar .acts #m-test{grid-column:1/-1;height:56px}
+html.gm .sheet{position:fixed;z-index:20;top:calc(var(--st) + 6px);left:0;right:0;margin:0 auto;width:min(640px,calc(100vw - var(--sl) - var(--sr) - 16px));max-height:calc(var(--vh100,100dvh) - 12px);overflow:auto;overscroll-behavior:contain;grid-template-columns:1fr 1fr;gap:8px 18px;padding:12px 14px 10px}
+html.gm #testbar{position:fixed;z-index:8;top:calc(var(--st) + 48px);left:calc(var(--sl) + 8px);background:var(--paper) var(--grain)}
+html.gm #titlerow:has(#testbar:not([hidden])){display:block}
+html.gm #titlerow:has(#testbar:not([hidden])) > :not(#testbar){display:none}
+html.gm #ridebar #respawn{display:inline-flex;position:fixed;z-index:8;right:calc(var(--sr) + 8px);bottom:calc(var(--sb) + 186px);width:100px;height:38px}
+html.gm #ridebar #respawn[hidden]{display:none}
+html.gm #ridebar #respawn .face{width:100%;padding:0;font-size:12px}
+html.gm #clock{top:44px}html.gm #clock b{font-size:26px}
+html.gm #barrow:has(#medals:not([hidden])){width:auto;max-width:56vw;padding:6px}
+html.gm #medals .medal{height:22px;font-size:9px;line-height:18px;padding:0 5px}html.gm #medals .medal i{font-size:11px;line-height:18px}
+html.gm #board{padding-top:10px}
+html.gm #board .line{top:41px}
 /* phone held upright: a full-screen card asking to turn it */
 html.turn,html.turn body{height:100%;overflow:hidden}
 html.turn #turn{display:grid;position:fixed;inset:0;z-index:50;place-items:center;padding:24px;background:var(--paper) var(--grain)}
@@ -392,7 +480,11 @@ html.turn #turn{display:grid;position:fixed;inset:0;z-index:50;place-items:cente
   <div id="gmbar"><button id="gmname" title="Show the level hint"><b id="gmnum">01</b><span id="gmlname"></span></button><button class="stamp small" id="levelsbtn" aria-expanded="false" aria-controls="board"><span class="face">Levels</span></button></div>
   <div id="top">
     <div id="wordmark" class="misreg">RISO RIDER</div>
-    <nav id="board" aria-label="Levels"><div class="line"></div><div id="jobs"></div></nav>
+    <nav id="board" aria-label="Levels">
+      <div id="shelves" role="tablist" aria-label="Shelves">
+        <button class="shelf" role="tab" data-shelf="levels">Levels</button><button class="shelf" role="tab" data-shelf="trials">Time trials</button><button class="shelf" role="tab" data-shelf="make">Make</button><button class="shelf" role="tab" data-shelf="community">Community</button>
+      </div>
+      <div class="line"></div><div id="jobs"></div></nav>
     <button class="stamp small" id="gear" aria-expanded="false" aria-controls="panel"><span class="face">Settings</span></button>
   </div>
 
@@ -408,10 +500,35 @@ html.turn #turn{display:grid;position:fixed;inset:0;z-index:50;place-items:cente
     <button class="stamp small solid" id="gmdone"><span class="face">Done</span></button>
   </div>
 
+  <!-- the maker's details sheet: name, hint, tools, ink or length, inks, picture, paper -->
+  <div id="makesheet" class="paper sheet" hidden role="group" aria-label="Level details">
+    <i class="screw a"></i><i class="screw b"></i>
+    <div class="ctl wide"><label for="m-name">Name</label><input id="m-name" class="typed" maxlength="32" autocomplete="off" spellcheck="false"></div>
+    <div class="ctl wide"><label for="m-hint">Hint</label><input id="m-hint" class="typed" maxlength="140" autocomplete="off" placeholder="One line for the player (optional)"></div>
+    <div class="ctl" data-for="puzzle"><span class="lbl" id="l-mtools">Tools</span><div class="switch multi" id="m-tools" role="group" aria-labelledby="l-mtools"><span data-t="line" role="checkbox" tabindex="0">Line</span><span data-t="wind" role="checkbox" tabindex="0">Wind</span><span data-t="rope" role="checkbox" tabindex="0">Rope</span><span data-t="sling" role="checkbox" tabindex="0">Sling</span></div></div>
+    <div class="ctl" data-for="puzzle"><label for="m-ink">Ink</label><span class="grp"><input class="fader" type="range" id="m-ink" min="50" max="2000" step="10"><span class="window" id="m-inkv">600</span></span></div>
+    <div class="ctl" data-for="trial"><label for="m-len">Length</label><span class="grp"><input class="fader" type="range" id="m-len" min="1600" max="6400" step="400"><span class="window" id="m-lenv">2400</span></span></div>
+    <div class="ctl"><label for="m-set">Ink set</label><select id="m-set" class="window"></select></div>
+    <div class="ctl"><span class="lbl">Inks</span><span class="grp inks"><select id="m-ink0" class="window" aria-label="Light ink"></select><select id="m-ink1" class="window" aria-label="Middle ink"></select><select id="m-ink2" class="window" aria-label="Dark ink"></select></span></div>
+    <div class="ctl"><label for="m-scene">Picture</label><span class="grp"><select id="m-scene" class="window"></select><button class="stamp small" id="m-reprint" title="Print the picture again with a new pattern"><span class="face">New print</span></button></span></div>
+    <div class="ctl"><label for="m-paper">Paper</label><select id="m-paper" class="window"></select></div>
+    <p class="note" id="m-note"></p>
+    <div class="row"><button class="stamp small" id="m-delete"><span class="face">Delete level</span></button><span class="spacer"></span><button class="stamp small solid" id="m-done"><span class="face">Done</span></button></div>
+  </div>
+
+  <!-- share a level (its code), or open one from a code -->
+  <div id="sharesheet" class="paper sheet" hidden role="group" aria-label="Share">
+    <i class="screw a"></i><i class="screw b"></i>
+    <p id="sharemsg"></p>
+    <textarea id="sharecode" spellcheck="false" autocomplete="off" rows="3" aria-label="Level code"></textarea>
+    <div class="row"><button class="stamp small solid" id="sharego"><span class="face">Copy code</span></button><button class="stamp small" id="sharelink" hidden><span class="face">Copy link</span></button><span class="spacer"></span><button class="stamp small" id="sharedone"><span class="face">Done</span></button></div>
+  </div>
+
   <div id="titlerow">
-    <div id="jobno" class="misreg"><small>LEVEL</small><span id="num">01</span></div>
+    <div id="jobno" class="misreg"><small id="kindlbl">LEVEL</small><span id="num">01</span></div>
     <div id="lname"></div>
     <p id="hint"></p>
+    <div id="testbar" class="paper" hidden><span>Testing your level</span><button class="stamp small" id="backmake"><span class="face">◀ Back to maker</span></button></div>
   </div>
 
   <div id="sheet">
@@ -419,11 +536,12 @@ html.turn #turn{display:grid;position:fixed;inset:0;z-index:50;place-items:cente
     <div id="stage" class="editing">
       <canvas id="bgs"></canvas><canvas id="bgr"></canvas><canvas id="fg"></canvas>
       <div id="tap" aria-hidden="true"></div>
-      <div id="hud" hidden><div id="badge" hidden></div><div id="refund" hidden aria-live="polite"><b>+0 ink</b><span>0/0 drops</span></div><div id="keyhint"></div></div>
+      <div id="hud" hidden><div id="badge" hidden></div><div id="refund" hidden aria-live="polite"><b>+0 ink</b><span>0/0 drops</span></div><div id="clock" hidden><b>0.00</b><span id="split"></span></div><div id="keyhint"></div></div>
       <div id="ok" hidden aria-hidden="true">
         <div class="okframe"><b>CLEARED!</b><span hidden><em id="okdate"></em></span></div>
         <div class="stars" id="okstars"></div>
       </div>
+      <div id="count" hidden aria-live="assertive"><b>3</b></div>
       <div id="sliprail"><div id="slip" class="paper" role="status" aria-live="polite"><svg class="mark" viewBox="0 0 30 26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></svg><div class="txt"></div></div></div>
       <div id="printing"><div class="feed paper"><b id="printjob">LOADING…</b><i class="track"></i></div></div>
       <div id="flash"></div>
@@ -442,6 +560,7 @@ html.turn #turn{display:grid;position:fixed;inset:0;z-index:50;place-items:cente
       <i id="lastride" hidden></i><i class="tick" id="n3"><b>★★★</b></i><i class="tick" id="n2"><b>★★</b></i>
     </div>
     <div id="inkread"><b>INK</b><span id="inkleft"></span></div>
+    <div id="medals" hidden aria-label="Medal times"></div>
   </div>
   <div id="slug"></div>
 
@@ -469,13 +588,45 @@ html.turn #turn{display:grid;position:fixed;inset:0;z-index:50;place-items:cente
     </div>
     <button class="stamp" id="toedit" title="Back to the drawing (E)"><span class="face">◀ Edit <kbd class="deskonly">E</kbd></span></button>
     <button class="stamp deskonly" id="restart" title="Ride again (R)"><span class="face">Restart <kbd>R</kbd></span></button>
+    <button class="stamp" id="respawn" hidden title="Back to the last checkpoint (C)"><span class="face">Checkpoint <kbd class="deskonly">C</kbd></span></button>
     <span class="keys deskonly">← → steer · space jump · ↑ push · ↓ brake / back</span>
+  </footer>
+
+  <footer id="makebar" hidden>
+    <div id="pieces" class="tray" role="toolbar" aria-label="Pieces">
+      <button class="tool" data-piece="slab" title="Slab: drag along the road you want"><span class="face"><svg viewBox="0 0 46 20"><path d="M4 7L42 12v5L4 12z" fill="currentColor" stroke="none"/></svg></span><span class="nm">Slab</span></button>
+      <button class="tool" data-piece="box" title="Box: drag a rectangle"><span class="face"><svg viewBox="0 0 46 20"><rect x="15" y="3" width="16" height="15" fill="currentColor" stroke="none"/></svg></span><span class="nm">Box</span></button>
+      <button class="tool" data-piece="spikes" title="Spikes: drag a line of them"><span class="face"><svg viewBox="0 0 46 20"><path d="M5 16l3.5-9 3.5 9 3.5-9 3.5 9 3.5-9 3.5 9 3.5-9 3.5 9 3.5-9 3.5 9" stroke-width="2" stroke-linejoin="round"/></svg></span><span class="nm">Spikes</span></button>
+      <button class="tool" data-piece="boost" title="Boost: drag along the top of a slab"><span class="face"><svg viewBox="0 0 46 20"><path d="M9 4l7 6-7 6M19 4l7 6-7 6M29 4l7 6-7 6" stroke-width="2.4" stroke-linejoin="round"/></svg></span><span class="nm">Boost</span></button>
+      <button class="tool" data-piece="line" title="Line: a tightrope you draw for the player"><span class="face"><svg viewBox="0 0 46 20"><path d="M3 14C14 13 24 6 43 6"/></svg></span><span class="nm">Line</span></button>
+      <button class="tool" data-piece="wind" title="Wind: a current, in the direction you draw"><span class="face"><svg viewBox="0 0 46 20"><path d="M3 5h16M24 5h10M8 10h22M34 10h8M3 15h10M17 15h18" stroke-width="2.2"/></svg></span><span class="nm">Wind</span></button>
+      <button class="tool" data-piece="rope" title="Rope: a trampoline between two points"><span class="face"><svg viewBox="0 0 46 20"><path d="M6 6q17 14 34 0" stroke-dasharray="4.5 3.5"/><circle cx="5" cy="6" r="2.5" fill="currentColor" stroke="none"/><circle cx="41" cy="6" r="2.5" fill="currentColor" stroke="none"/></svg></span><span class="nm">Rope</span></button>
+      <button class="tool" data-piece="sling" title="Sling: tap to place, drag its arrow to aim"><span class="face"><svg viewBox="0 0 46 20"><circle cx="14" cy="11" r="6.5" stroke-width="2.4"/><path d="M14 11L39 4.5" stroke-width="2.4"/><path d="M32.5 1.8l7 2.6-5 5.4" stroke-width="2.4" stroke-linejoin="round"/></svg></span><span class="nm">Sling</span></button>
+      <button class="tool" data-piece="drop" data-for="puzzle" title="Ink drop: tap to place, tap again to change its value"><span class="face"><svg viewBox="0 0 46 20"><path d="M23 2c3 4 6 7 6 10.5a6 6 0 0 1-12 0C17 9 20 6 23 2z" fill="currentColor" stroke="none"/></svg></span><span class="nm">Drop</span></button>
+      <button class="tool" data-piece="check" data-for="trial" title="Checkpoint: tap to place a ring the rider must pass"><span class="face"><svg viewBox="0 0 46 20"><circle cx="23" cy="10" r="7.5" stroke-width="2.4" stroke-dasharray="3.4 2.6"/></svg></span><span class="nm">Check</span></button>
+      <button class="tool" data-piece="move" title="Move: drag pieces, the start or the ring; drag empty paper to look around"><span class="face"><svg viewBox="0 0 46 20"><path d="M23 2v16M14 10h18M20 5l3-3 3 3M20 15l3 3 3-3M17 7l-3 3 3 3M29 7l3 3-3 3" stroke-width="2" stroke-linejoin="round"/></svg></span><span class="nm">Move</span></button>
+      <button class="tool" data-piece="erase" title="Erase: tap or drag across pieces"><span class="face"><svg viewBox="0 0 46 20"><path d="M17 4l12 12M29 4L17 16" stroke-width="3"/></svg></span><span class="nm">Erase</span></button>
+    </div>
+    <div class="mopts">
+      <div class="switch" id="m-mat" role="radiogroup" aria-label="Material"><span data-mat="solid" role="radio" tabindex="0">Solid</span><span data-mat="ice" role="radio" tabindex="0">Ice</span><span data-mat="crumble" role="radio" tabindex="0">Crumble</span></div>
+      <button class="switch" id="m-snap" role="switch" aria-label="Snap to grid"><span>Free</span><span>Grid</span></button>
+      <span class="zoom" id="m-zoom"><button class="stamp small" id="zoomout" title="Zoom out" aria-label="Zoom out"><span class="face">−</span></button><button class="stamp small" id="zoomin" title="Zoom in" aria-label="Zoom in"><span class="face">+</span></button></span>
+    </div>
+    <span class="spacer"></span>
+    <div class="acts">
+    <button class="stamp" id="m-undo" title="Undo (Z)"><span class="face">Undo <kbd>Z</kbd></span></button>
+    <button class="stamp" id="m-redo" title="Redo (Shift Z)"><span class="face">Redo</span></button>
+    <button class="stamp" id="m-details" aria-expanded="false" aria-controls="makesheet"><span class="face">Details</span></button>
+    <button class="stamp" id="m-share" title="Share this level"><span class="face">Share</span></button>
+    <button class="stamp solid double" id="m-test" title="Test your level (Enter)"><span class="face">Test ▶ <kbd>↵</kbd></span></button>
+    </div>
   </footer>
 
   <footer id="winbar" hidden>
     <div id="ticket" class="paper"></div>
     <span class="spacer"></span>
     <button class="stamp" id="retry" title="Back to the drawing (E)"><span class="face">Retry</span></button>
+    <button class="stamp" id="winmake" hidden><span class="face">◀ Maker</span></button>
     <button class="stamp solid double" id="next" title="Next level (Enter)"><span class="face">Next level →</span></button>
   </footer>
 </div>
@@ -498,7 +649,7 @@ if('serviceWorker' in navigator&&(isSecureContext||location.hostname==='localhos
 // Auto-update: a tab or installed app left open keeps running the code it loaded. When it comes back into view,
 // ask the server (cheaply: ETag/Last-Modified only) whether the game's files changed; if so, reload (never mid-ride:
 // it waits for the ride to end). Reloading is safe, since the app reopens your last level and its drawing.
-(()=>{const FILES=['index.html','src/app.js','src/physics.js','src/levels.js','src/side.js','src/ride.js','src/audio.js','riso.js'];
+(()=>{const FILES=['index.html','src/app.js','src/physics.js','src/levels.js','src/side.js','src/ride.js','src/audio.js','src/trials.js','src/maker.js','src/share.js','src/community.js','riso.js'];
   const stamp=()=>Promise.all(FILES.map(f=>fetch(f,{method:'HEAD',cache:'no-cache'}).then(r=>r.ok?(r.headers.get('etag')||r.headers.get('last-modified')||''):'').catch(()=>null)))
     .then(a=>a.includes(null)?null:a.join('|'));   // null = offline: say nothing
   let base=null,lastCheck=0,pending=false;

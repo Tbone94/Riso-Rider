@@ -12,6 +12,9 @@
 // so a rider who drifted off a tightrope visibly leaves its band before falling.
 import * as P from './physics.js';
 import {W,H,R,DT,G,COST,WIDTH,WIND,WELL,STATE,itemCost as physItemCost,polyLen,makeRope,closest} from './physics.js';
+// Contract v7: a level can be bigger than one sheet. S.view = {x,y,k} is the camera (world point → design units
+// (p − (x,y))·k); the app applies it to g before draw(). Missing view = the whole 800×500 sheet.
+const dimsOf=L=>(typeof P.dims==='function'?P.dims(L):{w:W,h:H});
 
 const TAU=Math.PI*2;
 // ---------- the sling (contract v4), feature-detected until physics lands it ----------
@@ -85,9 +88,12 @@ export function createSide({canvas,getState,hooks={}}){
   const ed={id:null,sm:null,raw:null,full:false,flashAt:-1e9,hover:null,ghostRef:null,ghostT0:0,lastT:0,
     touch:false,finger:null,aim:false,loupeSide:0,u:1,penT:0,penP:null,drag:null,cursor:''};
   const S_=()=>getState();
+  const V=()=>{const S=S_(),v=S&&S.view;return v&&v.k>0?v:{x:0,y:0,k:1};};
+  // The part of the world on screen, in world units.
+  const box=()=>{const v=V();return{x0:v.x,y0:v.y,x1:v.x+W/v.k,y1:v.y+H/v.k};};
   const editing=()=>{const S=S_();return S&&S.level&&S.mode==='edit';};
-  const pos=e=>{const r=canvas.getBoundingClientRect();return[(e.clientX-r.left)/r.width*W,(e.clientY-r.top)/r.height*H];};
-  const unitsPerPx=()=>{const r=canvas.getBoundingClientRect();return r.width>0?W/r.width:1;};
+  const pos=e=>{const r=canvas.getBoundingClientRect(),v=V();return[v.x+(e.clientX-r.left)/r.width*W/v.k,v.y+(e.clientY-r.top)/r.height*H/v.k];};
+  const unitsPerPx=()=>{const r=canvas.getBoundingClientRect();return r.width>0?W/(r.width*V().k):1;};
   // Legibility on small screens: below ~640 CSS px of stage (more than 1.25 design units per pixel) text never
   // drops under its CSS minimum and marks grow gently with it. Larger stages (desktop) are left exactly as designed.
   const SMALL=1.25;
@@ -127,7 +133,7 @@ export function createSide({canvas,getState,hooks={}}){
   function dragTo(S,p,fine){const d=ed.drag,it=S.items[d.i];if(!it)return;const q=[p[0]+d.grab[0],p[1]+d.grab[1]];d.moved=true;
     if(d.kind==='aim'){let a=Math.atan2(q[1]-it.y,q[0]-it.x);if(!fine){const st=Math.PI/36;a=Math.round(a/st)*st;}   // 5° steps; Shift = free
       it.a=Math.round(a*1e4)/1e4;return;}
-    if(d.kind==='well'||d.kind==='sling'){it.x=r1(clamp(q[0],0,W));it.y=r1(clamp(q[1],0,H));return;}
+    if(d.kind==='well'||d.kind==='sling'){const D=dimsOf(S.level);it.x=r1(clamp(q[0],0,D.w));it.y=r1(clamp(q[1],0,D.h));return;}
     const fixed=it[d.end==='a'?'b':'a'];let b=snapAt(S,q,fixed)||q;
     // ink budget: everything else stays, this rope may use what's left (length × COST.rope)
     const others=inkUsed(S.items)-itemCost(it),max=Math.max(MIN_ROPE,(S.level.ink-others)/COST.rope-.15),len=dist(fixed,b);
@@ -147,7 +153,7 @@ export function createSide({canvas,getState,hooks={}}){
   function snapTargets(S){const out=[];
     for(const k of['blocks','ice','crumble'])(S.level[k]||[]).forEach(p=>{const tops=new Set();topEdges(p).forEach(([a,b])=>{tops.add(a);tops.add(b);});
       p.forEach(q=>out.push(tops.has(q)?[q[0],q[1]+LINE_TH]:q));});
-    S.items.forEach(it=>{if(it.type==='line'||it.type==='wind'){if(it.pts.length){out.push(it.pts[0]);out.push(it.pts[it.pts.length-1]);}}
+    [...(S.level.fixed||[]),...S.items].forEach(it=>{if(it.type==='line'||it.type==='wind'){if(it.pts&&it.pts.length){out.push(it.pts[0]);out.push(it.pts[it.pts.length-1]);}}
       else if(it.type==='rope'){out.push(it.a);out.push(it.b);}});
     return out;}
   function ledgeSnap(S,p){let best=null,bd=TOUCH_SNAP;
@@ -165,8 +171,10 @@ export function createSide({canvas,getState,hooks={}}){
 
   function down(e){
     if(!editing()||ed.id!==null||(e.button!==undefined&&e.button!==0))return;
-    const S=S_(),touch=e.pointerType==='touch',p=penOf(e,touch);e.preventDefault();
-    ed.touch=touch;ed.finger=touch?pos(e):null;if(touch){ed.hover=p;const f=ed.finger[0];ed.loupeSide=f>W*.5?-1:1;}
+    const S=S_(),touch=e.pointerType==='touch',p=penOf(e,touch);
+    if(!(S.level.tools||[]).length)return;   // nothing to draw with (time trials): the app pans the course instead
+    e.preventDefault();
+    ed.touch=touch;ed.finger=touch?pos(e):null;if(touch){ed.hover=p;const f=ed.finger[0],b=box();ed.loupeSide=f>(b.x0+b.x1)*.5?-1:1;}
     // pressing a well's centre or a rope anchor picks it up (a finger can press it directly or aim with the pen)
     ed.u=unitsPerPx();const h=handleAt(S,touch?ed.finger:p,grabRad(touch))||(touch?handleAt(S,p,grabRad(false)):null);
     if(h){startDrag(S,h,e,touch,p);call('onChange');return;}
@@ -287,7 +295,10 @@ export function createSide({canvas,getState,hooks={}}){
     // wells: ringed
     S.items.forEach((it,i)=>{if(it.type!=='well')return;const live=ed.drag&&ed.drag.kind==='well'&&ed.drag.i===i;
       if(live)drawWellField(g,S,it.x,it.y,true);drawWell(g,S,it.x,it.y,tq,1,!live);});
+    // tools the level places itself (L.fixed) look exactly like drawn ones: they're part of the course
+    const FX=L.fixed||[];
     // wind: streaked lanes with an arrowhead
+    FX.forEach(it=>{if(it.type==='wind'&&it.pts&&it.pts.length>1)drawWind(g,S,it.pts,tq,1);});
     S.items.forEach(it=>{if(it.type==='wind')drawWind(g,S,it.pts,tq,1);});
     // blocks: a wide road band (first-person width), then key ink with a misregistered mid shadow
     L.blocks.forEach(p=>drawRoadBand(g,S,p,band(L.blockHw||WIDTH.block)));
@@ -303,7 +314,10 @@ export function createSide({canvas,getState,hooks={}}){
 
     drawGhostTrail(g,S,t,rm);
 
+    // checkpoints (time trials): numbered rings, hollow once the last ride passed them
+    drawChecks(g,S,tq);
     // lines: tightropes (bold line + far hairline), ropes: trampolines (dashed + dashed far edge)
+    FX.forEach(it=>{if(it.type==='line'&&it.pts&&it.pts.length>1)drawLine(g,S,it.pts,1);else if(it.type==='rope'&&it.a&&it.b)drawRope(g,S,it.a,it.b,1);else if(it.type==='sling')drawSling(g,S,it,'placed');});
     S.items.forEach(it=>{if(it.type==='line'&&it.pts.length>1)drawLine(g,S,it.pts,1);});
     S.items.forEach(it=>{if(it.type==='rope')drawRope(g,S,it.a,it.b,1);});
     // slings: open ring + aim arrow; the one being edited gets the full preview arc
@@ -323,6 +337,15 @@ export function createSide({canvas,getState,hooks={}}){
     if(edit)drawPreviews(g,S,tq);
     if(S.stroke)drawStroke(g,S,tq,lens);
     g.restore();}
+
+  // ---------- checkpoints ----------
+  // A dashed key ring (the goal's ring is solid) with a light-ink face and its number in stencil above it.
+  function drawChecks(g,S,tq){const L=S.level,cs=L.checks;if(!cs||!cs.length)return;const ink=S.ink,gh=S.ghost,got=gh&&gh.events?gh.events.filter(e=>e.type==='check'):null;
+    cs.forEach((c,i)=>{const r=c.r||(P.CHECK&&P.CHECK.r)||30,hit=!got||got.some(e=>e.i===i);
+      g.save();g.fillStyle=ink.light;g.globalAlpha=hit?.8:.35;g.beginPath();g.arc(c.x,c.y,r,0,TAU);g.fill();g.globalAlpha=1;
+      g.strokeStyle=ink.mid;g.lineWidth=3;g.setLineDash([6,5]);g.lineDashOffset=-tq*10;g.beginPath();g.arc(c.x+1.5,c.y+1.2,r,0,TAU);g.stroke();
+      g.strokeStyle=ink.key;g.lineWidth=2.4;g.beginPath();g.arc(c.x,c.y,r,0,TAU);g.stroke();g.setLineDash([]);g.restore();
+      labelAt(g,S,'CP '+(i+1),c.x,c.y-r-4);});}
 
   // ---------- sling ----------
   // An open ring (key over a misregistered mid ring) with a centre dot, a faint dashed orbit, and a bold aim arrow
@@ -532,7 +555,7 @@ export function createSide({canvas,getState,hooks={}}){
     g.globalAlpha=1;
     if(gh.status==='win'||!gh.at||rev<1)return;
     // failure: a bold hand-stamped X, thumped in once the trail has drawn
-    let[x,y]=gh.at;const off=x<14||x>W-14||y<14||y>H-14;x=clamp(x,18,W-18);y=clamp(y,18,H-26);
+    const B=box();let[x,y]=gh.at;const off=x<B.x0+14||x>B.x1-14||y<B.y0+14||y>B.y1-14;x=clamp(x,B.x0+18,B.x1-18);y=clamp(y,B.y0+18,B.y1-26);
     const age=t-ed.ghostT0-.55,k=rm?1:1+.5*Math.max(0,1-age/.14),gr=grow(),sz=13*k*gr,seed=Math.round(gh.at[0]*7+gh.at[1]*13);
     const bar=(x0,y0,x1,y1,w,j)=>{const dx=x1-x0,dy=y1-y0,l=Math.hypot(dx,dy),nx=-dy/l*w/2,ny=dx/l*w/2,q=i=>(hash(i,seed+j)-.5)*1.6;
       g.beginPath();g.moveTo(x0+nx+q(0),y0+ny+q(1));g.lineTo((x0+x1)/2+nx*1.15+q(2),(y0+y1)/2+ny*1.15+q(3));g.lineTo(x1+nx*.8+q(4),y1+ny*.8+q(5));
@@ -541,7 +564,7 @@ export function createSide({canvas,getState,hooks={}}){
     const label=REASON[gh.status]||String(gh.status||'').toUpperCase();
     const lf=fsz(12,12),lk=lf/12;g.font=`800 ${lf}px ${STENCIL}`;try{g.letterSpacing=`${1.8*lk}px`;}catch(_){}
     const totW=g.measureText(label).width;
-    let lx=x+sz*.55+4*lk,ly=y+sz*.55+3*lk;if(ly+lf+4>H-2)ly=y-sz-lf-6*lk;if(lx+totW>W-4)lx=x-sz-8-totW;
+    let lx=x+sz*.55+4*lk,ly=y+sz*.55+3*lk;if(ly+lf+4>B.y1-2)ly=y-sz-lf-6*lk;if(lx+totW>B.x1-4)lx=x-sz-8-totW;
     // knock the stamp out of whatever is under it on this plate (spikes, lines), like a riso knockout
     g.save();g.globalCompositeOperation='destination-out';g.fillStyle='#000';
     bar(x-sz,y-sz,x+sz,y+sz,12*gr,1);bar(x+sz,y-sz*.95,x-sz*.95,y+sz,12*gr,2);
@@ -616,14 +639,14 @@ export function createSide({canvas,getState,hooks={}}){
     // ink cost under the pen, plus what it becomes in first person
     // sizes never drop below a readable CSS size (phones have well under one pixel per design unit)
     const u=ed.u,f1=fsz(15,13),f2=fsz(9,9),gap=f1+2,big=u>SMALL;
-    const c=Math.round(itemCost(sk));let x=clamp(pen[0]+(big?14*u:12),4,W-Math.max(70,f1*4.5));const y=clamp(pen[1]-(big?f1+f2+6*u:24),4,H-Math.max(30,gap+f2+4)),num=`−${c}`,sub=ed.full?'OUT OF INK':WIDTH_NAME[sk.type]||'';
+    const B=box(),c=Math.round(itemCost(sk));let x=clamp(pen[0]+(big?14*u:12),B.x0+4,B.x1-Math.max(70,f1*4.5));const y=clamp(pen[1]-(big?f1+f2+6*u:24),B.y0+4,B.y1-Math.max(30,gap+f2+4)),num=`−${c}`,sub=ed.full?'OUT OF INK':WIDTH_NAME[sk.type]||'';
     const typed=()=>{g.font=`${f1}px ${TYPE}`;try{g.letterSpacing='0px';}catch(_){}},stencil=()=>{g.font=`800 ${f2}px ${STENCIL}`;try{g.letterSpacing=`${f2*.15}px`;}catch(_){}};
     g.textAlign='left';g.textBaseline='top';
     // with a finger down, keep the readout on the side away from the loupe
     let yy=y;
     if(ed.touch&&ed.finger){   // clear of the fingertip: up and to the right, flipped left near the right edge, down beside it near the top
-      typed();let w=g.measureText(num).width;stencil();w=Math.max(w,g.measureText(sub).width);const[fx,fy]=ed.finger,side=fx+30*u+w>W-4?-1:1,hgt=gap+f2;
-      x=side>0?fx+30*u:fx-30*u-w;yy=fy-44*u-hgt;if(yy<4){yy=fy-hgt/2;x=side>0?fx+40*u:fx-40*u-w;}x=clamp(x,4,W-w-4);yy=clamp(yy,4,H-hgt-4);}
+      typed();let w=g.measureText(num).width;stencil();w=Math.max(w,g.measureText(sub).width);const[fx,fy]=ed.finger,side=fx+30*u+w>B.x1-4?-1:1,hgt=gap+f2;
+      x=side>0?fx+30*u:fx-30*u-w;yy=fy-44*u-hgt;if(yy<4){yy=fy-hgt/2;x=side>0?fx+40*u:fx-40*u-w;}x=clamp(x,B.x0+4,B.x1-w-4);yy=clamp(yy,B.y0+4,B.y1-hgt-4);}
     // knock a halo out of the plate so the readout stays legible over blocks and lines
     g.save();g.globalCompositeOperation='destination-out';g.strokeStyle='#000';g.lineWidth=4;g.lineJoin='round';
     typed();g.strokeText(num,x,yy);stencil();g.strokeText(sub,x,yy+gap);g.restore();
@@ -646,9 +669,9 @@ export function createSide({canvas,getState,hooks={}}){
     crosshair(g,S,px,py,u);
     // the loupe: fg content redrawn at 2x in a clipped circle beside the pen, on the side with more room
     const r=LOUPE_PX/2*u,sep=r+26*u;let side=ed.loupeSide||1;
-    const place=sd=>[clamp(px+sd*sep,r+2*u,W-r-2*u),clamp(py-6*u,r+2*u,H-r-2*u)];
+    const B=box(),place=sd=>[clamp(px+sd*sep,B.x0+r+2*u,B.x1-r-2*u),clamp(py-6*u,B.y0+r+2*u,B.y1-r-2*u)];
     let[lx,ly]=place(side);if(Math.hypot(lx-px,ly-py)<r+10*u){side=-side;[lx,ly]=place(side);}ed.loupeEff=side;
-    if(Math.hypot(lx-px,ly-py)<r+10*u)ly=clamp(py+sep,r+2*u,H-r-2*u);   // cornered: go below the tip
+    if(Math.hypot(lx-px,ly-py)<r+10*u)ly=clamp(py+sep,B.y0+r+2*u,B.y1-r-2*u);   // cornered: go below the tip
     g.save();g.beginPath();g.arc(lx,ly,r,0,TAU);g.clip();
     g.save();g.globalCompositeOperation='destination-out';g.fillRect(lx-r,ly-r,2*r,2*r);g.restore();   // no 1x plate under the lens
     g.fillStyle=ink.light;g.globalAlpha=.12;g.fillRect(lx-r,ly-r,2*r,2*r);g.globalAlpha=1;

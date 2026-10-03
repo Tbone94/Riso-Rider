@@ -63,6 +63,10 @@ export const BOOST={speed:520,acc:1400,reach:14};
 export const CRUMBLE={delay:.35,fall:.6};
 export const FRICTION=.0012;
 export const NO_INPUT=Object.freeze({steer:0,jump:false,jumpHeld:false,push:0});
+// Contract v7: a level may be bigger than one sheet (w×h, default W×H) and ride longer (maxT, default 45 s).
+export const dims=L=>({w:L&&L.w>0?L.w:W,h:L&&L.h>0?L.h:H});
+// Checkpoints (time trials): rings you pass through like the goal. The goal only counts once every one is passed.
+export const CHECK={r:30};
 // Path samples record what the rider was doing, for the ghost trail in the editor.
 export const STATE={ground:0,air:1,rope:2,wind:3};
 
@@ -103,7 +107,7 @@ export function build(L,items,opts={}){
       grounded:false,groundKind:null,groundHw:WIDTH.block,n:[0,-1],coyote:1e9,jumpBuf:0,airT:0,speed:0,
       jumped:false,sway:0,lineT:0,swayT:0,swaySign:1,offSide:false,offY:0,owner:0,surface:null,boost:-1,
       sling:-1,slingK:0,slingAng:0,slingDir:1,slingSpeed:0,slingSwept:0,slingSweep:0,slingLast:-1,slingLastT:-1e9,slingFly:9,catchT:0,catchHw:WIDTH.block,windIn:[],windSkip:[]},
-    segs:[],hazards:[],ropes:[],winds:[],wells:[],drops:[],crumbles:[],boosts:[],slings:[],slingCatches:[]};
+    segs:[],hazards:[],ropes:[],winds:[],wells:[],drops:[],crumbles:[],boosts:[],slings:[],slingCatches:[],checks:[]};
   // x0,x1,y0,y1: the segment's bounding box grown by its reach, for a cheap early-out.
   // owner: which block or drawn line the segment belongs to.
   let owner=0;
@@ -116,7 +120,9 @@ export function build(L,items,opts={}){
   (L.boosts||[]).forEach(b=>{const dx=b.b[0]-b.a[0],dy=b.b[1]-b.a[1],l=Math.hypot(dx,dy)||1;w.boosts.push({ax:b.a[0],ay:b.a[1],bx:b.b[0],by:b.b[1],tx:dx/l,ty:dy/l,len:l});});
   (L.drops||[]).forEach(d=>w.drops.push({x:d.x,y:d.y,z:d.z||0,v:d.v||25,got:false,gotT:null}));
   (L.hazards||[]).forEach(p=>edges(p,false,4,WIDTH.hazard,'hazard',w.hazards));
-  items.forEach(it=>{
+  (L.checks||[]).forEach(c=>w.checks.push({x:c.x,y:c.y,r:c.r||CHECK.r,got:false,gotT:null}));
+  // Tools the level itself places (L.fixed) are built exactly like the player's own, and cost no ink.
+  [...(L.fixed||[]),...items].forEach(it=>{
     if(it.type==='line'){if(it.pts&&it.pts.length>1)edges(it.pts,false,2.5,WIDTH.line,'line',w.segs);}
     else if(it.type==='wind'){const s=[],m=WIND.radius;for(let i=1;i<it.pts.length;i++){const a=it.pts[i-1],b=it.pts[i],l=Math.hypot(b[0]-a[0],b[1]-a[1]);if(l<1e-6)continue;
       s.push({ax:a[0],ay:a[1],bx:b[0],by:b[1],tx:(b[0]-a[0])/l,ty:(b[1]-a[1])/l,x0:Math.min(a[0],b[0])-m,x1:Math.max(a[0],b[0])+m,y0:Math.min(a[1],b[1])-m,y1:Math.max(a[1],b[1])+m});}
@@ -264,14 +270,17 @@ function tail(w,L,r,input,onRope,inWind){
   if(Math.round(w.t/DT)%2===0&&!w.rollout){w.path.push([r.x,r.y,r.z,onRope?STATE.rope:inWind?STATE.wind:r.grounded?STATE.ground:STATE.air]);
     w.trail.unshift([r.x,r.y]);if(w.trail.length>28)w.trail.pop();}
 
-  const end=(status)=>{w.status=status;w.events.push({type:status,x:r.x,y:r.y,t:w.t});};
+  const end=(status)=>{w.status=status;w.events.push({type:status,x:r.x,y:r.y,t:w.t});},{w:LW,h:LH}=dims(L);
+  // checkpoints: swept like drops, any order
+  if(w.checks.length){const px=w.cpX??r.x,py=w.cpY??r.y;w.checks.forEach((c,i)=>{if(c.got||Math.abs(r.z)>=c.r)return;
+    const[cx,cy]=closest(c.x,c.y,px,py,r.x,r.y);if(Math.hypot(c.x-cx,c.y-cy)<c.r){c.got=true;c.gotT=w.t;w.events.push({type:'check',i,x:c.x,y:c.y,t:w.t});}});w.cpX=r.x;w.cpY=r.y;}
   if(r.sling<0)for(const s of w.hazards){if(r.x<s.x0||r.x>s.x1||r.y<s.y0||r.y>s.y1)continue;const[cx,cy]=closest(r.x,r.y,s.ax,s.ay,s.bx,s.by);if(Math.hypot(r.x-cx,r.y-cy)<R+s.th)return end(r.offSide?'fell':'popped');}
-  if(Math.hypot(r.x-L.goal.x,r.y-L.goal.y)<L.goal.r&&Math.abs(r.z)<L.goal.r)return end('win');
-  if(r.y>H+60||r.x<-80||r.x>W+80||Math.abs(r.z)>300)return end('fell');
+  if(Math.hypot(r.x-L.goal.x,r.y-L.goal.y)<L.goal.r&&Math.abs(r.z)<L.goal.r&&w.checks.every(c=>c.got))return end('win');
+  if(r.y>LH+60||r.x<-80||r.x>LW+80||Math.abs(r.z)>300)return end('fell');
   // Off the side and well below where you left, with nothing under you: call it now, cleanly.
   if(r.offSide&&r.y>r.offY+90&&![0,.3,.6].some(k=>groundBelow(w,r.x+r.vx*k,r.y,r.z)))return end('fell');
   if(r.speed<10){w.still+=DT;if(w.still>2.5)return end('stuck');}else w.still=0;   // pushing against a wall still counts as stuck
-  if(w.t>45)end('stuck');}
+  if(w.t>(L.maxT||45))end('stuck');}
 
 // ---------- slings ----------
 const TAU=Math.PI*2,wrap=a=>((a%TAU)+TAU)%TAU;
@@ -355,7 +364,7 @@ function dropTarget(nd,w){if(!nd)return 0;const r=w.rider,cur=r.grounded?r.groun
   return clamp(aim,-lim,lim);}
 // The lateral position a drop-hunting rider should aim for right now (0 if no drop is in reach).
 export function dropAim(w){return dropTarget(nextDrop(w),w);}
-function clone(w){return{...w,rider:{...w.rider,n:[...w.rider.n]},ropes:w.ropes.map(o=>({...o})),crumbles:w.crumbles.map(o=>({...o})),drops:w.drops.map(o=>({...o})),slingCatches:[...w.slingCatches],path:[],events:[],trail:[],rollout:true,level:w.level};}
+function clone(w){return{...w,rider:{...w.rider,n:[...w.rider.n]},ropes:w.ropes.map(o=>({...o})),crumbles:w.crumbles.map(o=>({...o})),drops:w.drops.map(o=>({...o})),checks:w.checks.map(o=>({...o})),slingCatches:[...w.slingCatches],path:[],events:[],trail:[],rollout:true,level:w.level};}
 // A copy of the world you can step forward without touching the original (for previews and bots).
 // Static geometry is shared; the rider and ropes are copied; path/events/trail start empty.
 export function cloneWorld(w){const c=clone(w);c.rollout=false;return c;}
@@ -395,9 +404,9 @@ export function autopilot(w,L,opts){const r=w.rider,dir=Math.sign(r.vx)||1;let j
   return{steer:center(w,target),jump,jumpHeld:jump||r.jumped,push:pushFor(w,inAnyWind(w))};}
 
 // Run a whole ride without rendering. policy: 'auto' | 'drops' (autopilot hunting drops) | 'none' | (world, level) => input
-export function simulate(L,items,{policy='auto',maxT=40,assist=0}={}){
+export function simulate(L,items,{policy='auto',maxT=L.maxT||40,assist=0}={}){
   const w=build(L,items,{assist}),pol=policy==='none'?()=>NO_INPUT:policy==='auto'?autopilot:policy==='drops'?(w,L)=>autopilot(w,L,{drops:true}):policy;
   while(w.status==='run'&&w.t<maxT)step(w,L,pol(w,L));
   const r=w.rider;return{status:w.status==='run'?'timeout':w.status,t:+w.t.toFixed(2),x:Math.round(r.x),y:Math.round(r.y),z:Math.round(r.z),
     ink:Math.round(inkUsed(items)),jumps:w.events.filter(e=>e.type==='jump').length,
-    refund:w.refund,drops:w.drops.filter(d=>d.got).length,dropsTotal:w.drops.length,world:w};}
+    refund:w.refund,drops:w.drops.filter(d=>d.got).length,dropsTotal:w.drops.length,checks:w.checks.filter(c=>c.got).length,world:w};}

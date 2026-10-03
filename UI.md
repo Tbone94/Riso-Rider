@@ -51,6 +51,11 @@ The *look* borrows from a print shop. The *words* never do: the user found print
 | Loading | LOADING LEVEL 03… |
 | Fail notes | Popped! / Fell off the tightrope. / Stuck. With a simple icon: down arrow, burst, pause. No proofreader's marks. |
 | Settings | Field of view, Camera (First person / Chase), Head bob, Reduce motion, Ride assist |
+| Shelves (2026-10-03) | Levels · Time trials · Make · Community |
+| Time trials | TRIAL 02, Checkpoint (CP 2), respawn ("Back to checkpoint 2."), Best, medals: Author / Gold / Silver / Bronze |
+| Maker | Make, New puzzle, New time trial, Pieces (Slab, Box, Spikes, Boost, Line, Wind, Rope, Sling, Drop, Check, Move, Erase), Solid / Ice / Crumble, Free / Grid, Details, Test, Share, Back to maker |
+| Clear check | "Beat your level to share it." · "Clear check passed" · "Changed since your clear." |
+| Sharing | Level code, Copy code, Copy link, Open level ("Paste a level code someone shared with you.") |
 
 ## Motion
 - **Paper moves like paper.** It slides from a feed (straight line, ease-out), drops flat, and never bounces or springs.
@@ -60,3 +65,12 @@ The *look* borrows from a print shop. The *words* never do: the user found print
 ## Colour
 - **Reprinting per level.** The UI uses only the current level's 3 inks (CSS vars `--light`, `--mid`, `--key`) plus the paper colour, so the whole interface reprints in each level's inks. That's the cohesion.
 - **Grain.** A subtle grain overlay (the same speckle as the game) on paper UI elements, via a small noise PNG or SVG `feTurbulence`, kept static.
+
+## v7 additions (2026-10-03): time trials, the maker, sharing
+All of these reuse the components above, and nothing new looks like an app widget:
+- **Shelves:** index tabs over the level strip. They're square, stencil caps, outlined; the open one is inked.
+- **The pieces tray:** a second stamp tray labelled PIECES, the same as TOOLS. Each piece shows its mark (a slab, a box, spikes, chevrons, the tool marks, a drop, a dashed ring, a move cross, an erase X). Material and grid are two-position switches.
+- **Details and Share:** paper sheets built like the settings panel (screws, square, tilted), in the layout and never as a modal. Text fields are typed on an underline. Pickers are the panel's inset windows. The level code sits in a dashed box.
+- **Medals:** stamps (Author has the double rule), inked once earned. On a trial win the time is stamped where CLEARED! goes, and the medal stamps land one at a time like stars.
+- **The clock:** big stencil numbers with the misregistered mid ink, top centre. The checkpoint split under it is typed.
+- **Your own levels print in your own inks and paper.** The whole interface reprints in them, exactly as for campaign levels.

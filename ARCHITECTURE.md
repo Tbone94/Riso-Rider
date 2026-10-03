@@ -423,3 +423,62 @@ User feedback: tools "don't pick up" the ball (vertical ropes break, slings miss
 ## App
 - **Touch:** an analog **stick** (`#stick`) replaces the ◀ ▶ pads. x steers; up pushes forward; down brakes, then rolls back. Dead zone 0.16. Keyboard and stick add up in `readInput`. Jump button and tap-to-jump are unchanged.
 - `sw.js` cache → `riso-rider-v5`.
+
+---
+# Contract v7: time trials, the level maker, sharing (2026-10-03)
+User request: custom levels anyone can make and share ("Mario Maker vibes"), where you must beat your own level before you can share it; and Trackmania-style time trials, with a builder for those too. Everything is additive: v1–v6 levels and saves work unchanged.
+
+## Files
+| File | What it is |
+|---|---|
+| `src/trials.js` | The time-trial courses, `export default [levels…]`. Checked by `node tools/trials.mjs`. |
+| `src/maker.js` | The level maker: `createMaker({canvas,getState,hooks})`, plus `blank(mode)`, `snapshot(L)`, `restore(L,s)`, `LIMITS`. Pure editor logic and its overlay; app.js owns the UI around it. |
+| `src/share.js` | Share codes (`encode`, `decode`), `clean(level)` (the only way a level from outside gets in), `levelHash`, input packing (`packInput`, `rle`), `rider()` and `replay()` for the clear check. No DOM; runs in node. |
+| `src/community.js` | Featured community levels shipped with the game: `[{level, proof}]`. |
+
+## Level fields (physics.js, additive)
+- `w`, `h`: the level's size; default 800×500. `dims(L)` returns `{w,h}`. The ride ends 'fell' past `x<-80`, `x>w+80`, `y>h+60`.
+- `maxT`: the ride's timeout in seconds (default 45). `simulate()` defaults `maxT` to it.
+- `fixed:[items]`: tools the level places itself (line, wind, rope, sling: the same shapes as drawn items). `build()` adds them before the player's items. They cost no ink and the player can't move them.
+- `checks:[{x,y,r}]`: checkpoints (`CHECK.r` 30). `world.checks=[{x,y,r,got,gotT}]`, passed (swept, any order) while `|z|<r`, event `{type:'check',i,x,y,t}`. **The goal only wins once every checkpoint is passed.** `simulate()` also returns `checks` (passed count).
+- `mode:'trial'`, `medals:{author,gold,silver,bronze}` (seconds): a time trial. No drawing (`tools:[]`, `ink:0`).
+- `sheet`: the level's label on the ride backdrop and inset ("TRIAL 02", "CUSTOM"); campaign levels leave it out (LEVEL nn).
+- `bg.paper`: a Riso paper name (default Natural). The side and ride backdrops print on it, and the app sets `--paper`.
+
+## Shared state (app.js)
+- `S.mode` gains `'make'`.
+- `S.view={x,y,k}`: the side view's camera. A world point p is drawn at (p − (x,y))·k design units. The app applies it to `g` before `side.draw()` and `maker.draw()`. side.js maps pointers through it and clamps its readouts to the visible box. `ride.drawTransition` starts the swoop from the view's centre and scale.
+- `S.make={piece, material:'solid'|'ice'|'crumble', snap}`: the maker's pen.
+- `S.trial`: during a time-trial ride, `{offset, ghost:{rec}, rec, splits, respawns}`. `offset` is time lost to respawns, so the run's clock is `world.t + offset`. `rec` samples `[t,x,y,z,state]` every 2 steps. ride.js reads `S.trial.ghost` and `S.trial.offset` to draw the best run's ghost ball and the clock.
+
+## Shelves (app.js)
+The level strip has four tabs: **Levels** (campaign), **Time trials**, **Make** (your levels, plus New puzzle / New trial cards) and **Community** (featured levels, levels you opened from codes, and an Open card).
+- Storage: `drift.trials.v1` holds your best per trial (`{t, medal, rec, splits}`). `drift.mine.v1` holds your levels (`[{id, level, rev, proof, clear}]`). `drift.got.v1` holds levels opened from codes (`[{id:'c-'+levelHash, level, proof, verified}]`). `drift.shelf.v1` is the open tab, and `drift.last.v1` is now `{shelf, id}` (an old string id still loads).
+- Campaign and trials unlock as before: clearing one opens the next two. Make and Community are always open.
+
+## Time trials
+- Edit mode is a course view: no tools or ink bar, a medal strip, drag, scroll or arrow keys to look along the course, and your best run as the ghost trail.
+- Riding shows a clock (`#clock`) and checkpoint splits against your best run.
+- **A fall never goes back to edit.** After ~0.5 s you respawn at the last checkpoint (a `cloneWorld` taken the step it was passed) with the speed you had; with no checkpoint passed, the run restarts. C or Backspace (the touch Checkpoint stamp) respawns on purpose; R restarts.
+- Finishing stamps the time on the sheet, with medal stamps instead of stars. Auto-ride times don't count.
+
+## The maker and the clear check
+- **Pieces:** slab (drag the road surface; it's 22 thick), box, spikes, boost (drag along a slab top), line, wind, rope, sling, drop (puzzles; tap again to cycle 15/25/40), check (trials), move (pieces, start, ring; empty paper pans), and erase.
+- **Editing:** a 10-unit grid snap (Free/Grid), undo/redo, two-finger pan and zoom, wheel pan, ctrl-wheel zoom, and +/− (trials).
+- **Details sheet:** name, hint, tools offered and ink (puzzle), length 1600–6400 (trial), ink set or three inks, picture, new print (reseed), paper, and delete.
+- **Test** plays your level as a player would (`testing` = its entry, with a TESTING slip and a way back). **Beating it yourself, not on auto-ride, passes the clear check:**
+  - The ride is kept as the proof: `{items, assist, steps: rle of [steer·32, push·32, jump|held<<1] per physics step, respawns: [step index…], t}`.
+  - The level's ★★★ par is set to your net ink (puzzle), or its medals to author = your time, gold ×1.08, silver ×1.25, bronze ×1.5 (trial).
+  - Clears only ever get better: a worse re-clear keeps the old proof.
+- `clear.hash = levelHash(level)` covers the gameplay fields only (not the name, hint, inks, pars or medals). Any gameplay edit voids the clear until you beat the level again. Undo restores it.
+- **Share** is enabled once cleared. It shows `RR1-…` (deflate-raw + base64url) and a `#play=` link when the game isn't inside a frame (itch.io is).
+- **Community → Open** (or a `#play=` link) runs `decode()`: `clean()` rebuilds the level from known fields only, with clamped numbers, capped lists and stripped strings. `replay()` then re-runs the proof: the drawing must use only the level's tools, within its ink, with no sling within 80 of the ring. A proof that doesn't replay is shown as "couldn't be checked on this device", never as broken (transcendental maths can differ in the last bit between browsers).
+- Live input is quantized to 1/32 for everyone (`packInput`), so a recorded ride replays exactly.
+
+## Not built (needs a server)
+- A shared online board where anyone's submissions appear for everyone. Today, sharing is by code or link, and featured levels ship in `src/community.js`. A board would `POST` a code (already cleared, so it carries its proof) to a small service. The service would run `share.js`'s `decode()` + `replay()` in node to reject anything that doesn't replay, and the Community shelf would list what it serves.
+
+## App
+- `sw.js` cache → `riso-rider-v7`, and it caches the four new modules.
+- **Countdown (2026-10-03):** every ride starts with 3 · 2 · 1 · GO!, 0.6 s a beat, stamped on the sheet (`#count`) with the stamp sound. It runs after the swoop or wipe, and on R restarts. A checkpoint respawn doesn't count down. The physics waits, so a trial's clock starts at GO. Keys held at GO count; a jump pressed early is dropped.
+- **Trial medals re-tuned (2026-10-03, the user found gold too hard):** medals now hang off the safe route (a clean ride), not the perfect one. Author is about the fastest proven route × 1.04, gold safe × 0.96 (take a shortcut), silver safe × 1.06, and bronze safe × 1.35 to 0.5 s. A maker's clear sets author = their time, gold × 1.1, silver × 1.25, bronze × 1.6. Level cards work out your medal from your best time, so re-tuned thresholds apply to old bests.

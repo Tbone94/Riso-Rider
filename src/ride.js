@@ -5,6 +5,7 @@
 // transparent canvas that the app multiplies over the printed backdrop.
 // Contract: ARCHITECTURE.md → ride.js. A WebGL rebuild can keep buildGeometry/camera and
 // swap the painter for a depth buffer.
+import * as PH from './physics.js';
 import {W,H,R,WIND,WELL,WIDTH,CRUMBLE,groundBelow} from './physics.js';
 import {LEVELS} from './levels.js';
 
@@ -20,7 +21,7 @@ const ease=(k,dt)=>1-Math.exp(-k*dt);
 const hash=(i,s=0)=>{let h=Math.imul(i|0,374761393)+Math.imul(s|0,668265263)|0;h=Math.imul(h^(h>>>13),1274126177);return((h^(h>>>16))>>>0)/4294967296;};
 
 // Surface styles
-const ROAD=1,WALL=2,UNDER=3,CAP=4,LINE=5,ROPE=6,HAZ=7,STREAK=8,LANE=9,WELLI=10,GOAL=11,CHEV=12,ICE=13,CRT=14,BOOSTP=15,DROPI=16,SLINGI=17;
+const ROAD=1,WALL=2,UNDER=3,CAP=4,LINE=5,ROPE=6,HAZ=7,STREAK=8,LANE=9,WELLI=10,GOAL=11,CHEV=12,ICE=13,CRT=14,BOOSTP=15,DROPI=16,SLINGI=17,CHECKI=18,GHOSTI=19;
 
 // ---------- geometry built once per ride ----------
 function polyArea(p){let a=0;for(let i=0;i<p.length;i++){const q=p[i],r=p[(i+1)%p.length];a+=q[0]*r[1]-r[0]*q[1];}return a/2;}
@@ -101,6 +102,9 @@ function along(wd,s,o){const{pts,cum}=wd;let i=1;while(i<cum.length-1&&cum[i]<s)
 // ---------- the ride backdrop (a riso scene printed once per level) ----------
 const A=a=>`rgba(0,0,0,${clamp(a,0,1)})`;
 const sheetNo=level=>Math.max(1,LEVELS.findIndex(l=>l.id===level.id)+1);
+// The level's label on the backdrop and the inset: its own `sheet` (contract v7: "TRIAL 02", "CUSTOM") or LEVEL nn.
+const sheetName=level=>level.sheet||`LEVEL ${String(sheetNo(level)).padStart(2,'0')}`;
+const dimsOf=L=>(typeof PH.dims==='function'?PH.dims(L):{w:W,h:H});
 function ridge(r,x0,x1,y0,y1,rough,depth){let p=[[x0,y0],[x1,y1]],amp=(x1-x0)*rough;
   for(let d=0;d<depth;d++){const o=[];for(let i=0;i<p.length-1;i++)o.push(p[i],[(p[i][0]+p[i+1][0])/2,(p[i][1]+p[i+1][1])/2+(r()+r()+r()-1.5)*amp]);o.push(p[p.length-1]);p=o;amp*=.55;}return p;}
 function fillTo(c,pts,bottom){c.beginPath();c.moveTo(pts[0][0],pts[0][1]);pts.forEach(p=>c.lineTo(p[0],p[1]));c.lineTo(pts[pts.length-1][0],bottom);c.lineTo(pts[0][0],bottom);c.closePath();c.fill();}
@@ -158,11 +162,11 @@ function rideScene(c,r,level,sheetNo){const[L,M,D]=c,kind=level.bg.scene;
   const vis=(1-1/BG_SCALE)/2,x0=W*vis+12,x1=W*(1-vis)-12,y0=H*vis+12;
   [[x0,y0],[x1,y0]].forEach(([x,y])=>c.forEach(k=>{k.strokeStyle=A(.9);k.lineWidth=.8;k.beginPath();k.arc(x,y,5,0,TAU);k.moveTo(x-9,y);k.lineTo(x+9,y);k.moveTo(x,y-9);k.lineTo(x,y+9);k.stroke();}));
   D.fillStyle=A(.85);D.font='8px "Cutive Mono",ui-monospace,Menlo,monospace';D.textBaseline='top';
-  D.fillText(`LEVEL ${String(sheetNo).padStart(2,'0')} · ${level.name.toUpperCase()}`,x0-5,y0+11);}
+  D.fillText(`${sheetNo} · ${level.name.toUpperCase()}`,x0-5,y0+11);}
 
 // ---------- the renderer ----------
 export function createRide(){
-  let geo=null,worldRef=null,levelRef=null;
+  let geo=null,worldRef=null,levelRef=null,Sref=null;
   // camera state
   let chA=0,whip=0,snapT=0,chW=0,slRef=null,lastLand=null,yaw=0,heading=1,flipT=0,pitch=P0,shake=0,squash=0,evIdx=0,camX=0,camY=0,camZ=0,chaseInit=false;
   // per-frame camera basis (module scratch for speed)
@@ -244,7 +248,7 @@ export function createRide(){
       case HAZ:{fillPoly(P,pat.mid,f*.45);drawSpikes(ch,d);return;}}
     if(ch.crk){const m=project(P);if(m){g.globalAlpha=AM*(f);g.strokeStyle=ink.key;g.lineWidth=1.3;g.setLineDash([5,4]);g.beginPath();trace(m,0,0);g.stroke();g.setLineDash([]);}}}
   // What lies under a tightrope chunk: the next surface down, else the spike floor, else the page bottom.
-  function shadowY(ch){if(ch.shY!=null)return ch.shY;const q=ch.mid[0],gb=groundBelow(worldRef,q[0],q[1]+LINE_TH+6,0);let y=gb?gb.y:H+60;
+  function shadowY(ch){if(ch.shY!=null)return ch.shY;const q=ch.mid[0],gb=groundBelow(worldRef,q[0],q[1]+LINE_TH+6,0);let y=gb?gb.y:dimsOf(levelRef).h+60;
     for(const h of worldRef.hazards){const lo=Math.min(h.ax,h.bx),hi=Math.max(h.ax,h.bx);if(q[0]>=lo&&q[0]<=hi&&hi>lo){const hy=h.ay+(h.by-h.ay)*(q[0]-h.ax)/(h.bx-h.ax);if(hy>q[1]&&hy<y)y=hy;}}
     return ch.shY=y;}
   // Spikes are grown only near the camera, jittered so they read as a thorn bed rather than a grid.
@@ -304,7 +308,7 @@ export function createRide(){
     g.fillStyle=ink.mid;g.beginPath();g.arc(cx+mis,cy+mis*.7,13*s,0,TAU);g.fill();
     g.fillStyle=ink.key;g.beginPath();g.arc(cx,cy,12*s,0,TAU);g.fill();
     g.strokeStyle=ink.key;g.lineWidth=clamp(1.5*s,.6,4);g.beginPath();g.arc(cx,cy,20*s,0,TAU);g.stroke();
-    const gb=groundBelow(worldRef,wl.x,wl.y+14,0),bot=gb?gb.y:H+40;g.fillStyle=ink.key;g.beginPath();
+    const gb=groundBelow(worldRef,wl.x,wl.y+14,0),bot=gb?gb.y:dimsOf(levelRef).h+40;g.fillStyle=ink.key;g.beginPath();
     for(let y=wl.y+22;y<bot;y+=9)if(pt(wl.x,y,0)){const rr=clamp(1.2*ss1,.4,3);g.moveTo(sx1+rr,sy1);g.arc(sx1,sy1,rr,0,TAU);}g.fill();}
 
   // The goal: a ring gate standing across the track (in the y–z plane) that you ride through.
@@ -466,6 +470,8 @@ export function createRide(){
     world.wells.forEach(w=>{if(!ahead(w.x,w.y,0,WELL.range))return;const it=item();it.d=dist2(w.x,w.y,0);it.st=WELLI;it.o={w};});
     (world.slings||[]).forEach(sl=>{if(!ahead(sl.x,sl.y,0,(sl.rc||34)*1.9))return;const it=item();it.d=dist2(sl.x,sl.y,0);it.st=SLINGI;it.o={s:sl};});
     const G=levelRef.goal;if(ahead(G.x,G.y,0,G.r*1.5)){const it=item();it.d=dist2(G.x,G.y,0);it.st=GOAL;}
+    (world.checks||[]).forEach((c,i)=>{if(!ahead(c.x,c.y,0,c.r*1.5))return;const d=dist2(c.x,c.y,0);if(d>fr2)return;const it=item();it.d=d;it.st=CHECKI;it.o={c,i};});
+    if(Sref){const q=ghostAt(Sref,world);if(q&&ahead(q[0],q[1],q[2],R*2)){const it=item();it.d=dist2(q[0],q[1],q[2]);it.st=GHOSTI;it.o={q};}}
     // boost pads lie on a surface: sort them just in front of it
     (world.boosts||[]).forEach(b=>{for(let s0=0;s0<b.len;s0+=20){const s1=Math.min(b.len,s0+20),mx=b.ax+b.tx*(s0+s1)/2,my=b.ay+b.ty*(s0+s1)/2;
       if(!ahead(mx,my,0,PAD+20))continue;const d=dist2(mx,my,0);if(d>fr2)continue;const it=item();it.d=bias(d,28);it.st=BOOSTP;it.o={b,s0,s1};}});
@@ -476,7 +482,7 @@ export function createRide(){
 
   // Ballistic guess at the landing spot (gravity only; wind and wells will bend it).
   function predictLanding(world){const r=world.rider;let x=r.x,y=r.y,vx=r.vx,vy=r.vy;const h=1/30;
-    for(let i=0;i<50;i++){const nx=x+vx*h,ny=y+vy*h;vy+=900*h;const gb=groundBelow(world,nx,y,r.z);if(gb&&gb.y<=ny+R)return{x:nx,y:gb.y};x=nx;y=ny;if(y>H+60)return null;}
+    for(let i=0;i<50;i++){const nx=x+vx*h,ny=y+vy*h;vy+=900*h;const gb=groundBelow(world,nx,y,r.z);if(gb&&gb.y<=ny+R)return{x:nx,y:gb.y};x=nx;y=ny;if(y>dimsOf(levelRef).h+60)return null;}
     return null;}
   // Where does the surface ahead end? Returns {x,y,hw,land:{x,y}|null} or null.
   function edgeAhead(world){const r=world.rider;if(!r.grounded||r.groundKind==='rope')return null;
@@ -537,56 +543,94 @@ export function createRide(){
   const IX=W-204,IY=H-132,IS=.235,IW=W*IS,IH=H*IS,MONO='"Cutive Mono",ui-monospace,Menlo,monospace';
   // The static part of the slip (level, drawing, goal) is printed once per ride into a small
   // device-resolution canvas; ropes, crumbles, drops, the trail and the rider are drawn live.
-  let insetCv=null,insetKey='';
+  // A course wider than one sheet (contract v7) is printed whole, and the slip shows a sheet-wide window
+  // of it that follows the rider (winX, in world units).
+  let insetCv=null,insetKey='',winX=0;
   function insetStatic(world){const m0=g.getTransform?g.getTransform():{a:1,b:0},px=Math.hypot(m0.a,m0.b)||1,key=px.toFixed(3)+ink.key+ink.mid+ink.light;
     if(insetCv&&insetKey===key&&insetCv.world===world)return insetCv;insetKey=key;
-    const M=12,c=insetCv=document.createElement('canvas');c.world=world;c.width=Math.ceil((IW+2*M)*px);c.height=Math.ceil((IH+2*M)*px);
-    const x=c.getContext('2d');if(!x||!x.setTransform)return c;x.setTransform(px,0,0,px,(M-IX)*px,(M-IY)*px);
-    const m=(a,b)=>[IX+a*IS,IY+b*IS],L=levelRef,poly=p=>{x.beginPath();p.forEach((q,i)=>{const[u,v]=m(q[0],q[1]);i?x.lineTo(u,v):x.moveTo(u,v);});x.closePath();};
-    x.fillStyle=ink.light;x.globalAlpha=.16;x.fillRect(IX,IY,IW,IH);x.globalAlpha=1;
-    x.strokeStyle=ink.key;x.lineWidth=.8;x.strokeRect(IX,IY,IW,IH);
-    x.lineWidth=.6;x.beginPath();for(const[a,b,sx,sy]of[[IX,IY,-1,-1],[IX+IW,IY,1,-1],[IX,IY+IH,-1,1],[IX+IW,IY+IH,1,1]]){x.moveTo(a+sx*3,b);x.lineTo(a+sx*9,b);x.moveTo(a,b+sy*3);x.lineTo(a,b+sy*9);}x.stroke();
-    x.save();x.beginPath();x.rect(IX,IY,IW,IH);x.clip();
+    const M=12,L=levelRef,D=dimsOf(L),c=insetCv=document.createElement('canvas');c.world=world;c.width=Math.ceil((D.w*IS+2*M)*px);c.height=Math.ceil((IH+2*M)*px);
+    const x=c.getContext('2d');if(!x||!x.setTransform)return c;x.setTransform(px,0,0,px,M*px,M*px);
+    const m=(a,b)=>[a*IS,b*IS],poly=p=>{x.beginPath();p.forEach((q,i)=>{const[u,v]=m(q[0],q[1]);i?x.lineTo(u,v):x.moveTo(u,v);});x.closePath();};
     x.fillStyle=ink.key;x.globalAlpha=.9;for(const p of L.blocks){poly(p);x.fill();}
-    x.lineWidth=.8;for(const p of L.ice||[]){poly(p);x.globalAlpha=.9;x.stroke();x.save();x.clip();x.beginPath();const xs=p.map(q=>m(q[0],q[1])[0]),ys=p.map(q=>m(q[0],q[1])[1]),x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys);
+    x.lineWidth=.8;x.strokeStyle=ink.key;for(const p of L.ice||[]){poly(p);x.globalAlpha=.9;x.stroke();x.save();x.clip();x.beginPath();const xs=p.map(q=>m(q[0],q[1])[0]),ys=p.map(q=>m(q[0],q[1])[1]),x0=Math.min(...xs),x1=Math.max(...xs),y0=Math.min(...ys),y1=Math.max(...ys);
       for(let u=x0-(y1-y0);u<x1;u+=3){x.moveTo(u,y1);x.lineTo(u+(y1-y0),y0);}x.stroke();x.restore();}
     x.globalAlpha=1;x.strokeStyle=ink.mid;x.lineWidth=1.2;for(const b of world.boosts||[]){const a=Math.atan2(b.ty,b.tx);for(let u=6;u<b.len;u+=12){const[px_,py_]=m(b.ax+b.tx*u,b.ay+b.ty*u);x.beginPath();x.moveTo(px_-Math.cos(a-.7)*3,py_-Math.sin(a-.7)*3-1);x.lineTo(px_,py_-1);x.lineTo(px_-Math.cos(a+.7)*3,py_-Math.sin(a+.7)*3-1);x.stroke();}}
     x.beginPath();for(const sg of world.hazards){const n=Math.max(2,Math.round(Math.hypot(sg.bx-sg.ax,sg.by-sg.ay)/10));for(let i=0;i<=n;i++){const[u,v]=m(sg.ax+(sg.bx-sg.ax)*i/n,sg.ay+(sg.by-sg.ay)*i/n-(i&1?4:0));i?x.lineTo(u,v):x.moveTo(u,v);}}x.stroke();
     x.strokeStyle=ink.key;x.lineWidth=1.4;x.lineCap='round';x.beginPath();for(const sg of world.segs){if(sg.kind!=='line')continue;const a=m(sg.ax,sg.ay),b=m(sg.bx,sg.by);x.moveTo(a[0],a[1]);x.lineTo(b[0],b[1]);}x.stroke();
-    x.strokeStyle=ink.mid;x.setLineDash([5,3]);x.lineWidth=2.2;x.beginPath();for(const wd of world.winds)wd.pts.forEach((q,i)=>{const[u,v]=m(q[0],q[1]);i?x.lineTo(u,v):x.moveTo(u,v);});x.stroke();x.setLineDash([]);
+    x.strokeStyle=ink.mid;x.setLineDash([5,3]);x.lineWidth=2.2;for(const wd of world.winds){x.beginPath();wd.pts.forEach((q,i)=>{const[u,v]=m(q[0],q[1]);i?x.lineTo(u,v):x.moveTo(u,v);});x.stroke();}x.setLineDash([]);
     x.strokeStyle=ink.key;x.fillStyle=ink.key;x.lineWidth=1;for(const w of world.wells){const[u,v]=m(w.x,w.y);x.beginPath();x.arc(u,v,2.5,0,TAU);x.fill();x.beginPath();x.arc(u,v,WELL.range*IS*.4,0,TAU);x.stroke();}
     {const[u,v]=m(L.goal.x,L.goal.y);x.lineWidth=1.8;x.beginPath();x.arc(u,v,L.goal.r*IS*1.1,0,TAU);x.stroke();}
     for(const sl of world.slings||[]){const[u,v]=m(sl.x,sl.y),rr=(sl.rc||34)*IS,ca=Math.cos(sl.a),sa=Math.sin(sl.a),L2=rr*2.3;
       x.strokeStyle=ink.key;x.lineWidth=1.6;x.beginPath();x.arc(u,v,rr,0,TAU);x.stroke();
       x.strokeStyle=ink.mid;x.fillStyle=ink.mid;x.lineWidth=1.4;x.beginPath();x.moveTo(u,v);x.lineTo(u+ca*L2,v+sa*L2);x.stroke();
       x.beginPath();x.moveTo(u+ca*(L2+3),v+sa*(L2+3));x.lineTo(u+ca*L2-sa*2.4,v+sa*L2+ca*2.4);x.lineTo(u+ca*L2+sa*2.4,v+sa*L2-ca*2.4);x.closePath();x.fill();}
-    x.restore();return c;}
-  function drawInset(world,S,t,edge){const m=(x,y)=>[IX+x*IS,IY+y*IS],inBox=(x,y)=>x>IX&&x<IX+IW&&y>IY&&y<IY+IH;
+    return c;}
+  function drawInset(world,S,t,edge){const D=dimsOf(levelRef),r=world.rider;
+    winX=D.w>W?clamp(r.x-W*.4,0,D.w-W):0;
+    const m=(x,y)=>[IX+(x-winX)*IS,IY+y*IS],inBox=(x,y)=>x>IX&&x<IX+IW&&y>IY&&y<IY+IH;
     const c=insetStatic(world),M=12;
     g.save();g.translate(IX+IW/2,IY+IH/2);g.rotate(-.011);g.translate(-IX-IW/2,-IY-IH/2);
-    g.globalAlpha=AM*(1);if(c.width)g.drawImage(c,IX-M,IY-M,IW+2*M,IH+2*M);
-    g.fillStyle=ink.key;g.font='10px '+MONO;g.textBaseline='bottom';g.fillText(`LEVEL ${String(sheetNo(levelRef)).padStart(2,'0')}`,IX,IY-3);
-    g.textAlign='right';g.fillText(`${world.t.toFixed(1)}s`,IX+IW,IY-3);g.textAlign='left';
+    // the slip: a light tint, a thin key rule and crop marks
+    g.globalAlpha=AM*(.16);g.fillStyle=ink.light;g.fillRect(IX,IY,IW,IH);g.globalAlpha=AM*(1);
+    g.strokeStyle=ink.key;g.lineWidth=.8;g.strokeRect(IX,IY,IW,IH);
+    g.lineWidth=.6;g.beginPath();for(const[a,b,sx,sy]of[[IX,IY,-1,-1],[IX+IW,IY,1,-1],[IX,IY+IH,-1,1],[IX+IW,IY+IH,1,1]]){g.moveTo(a+sx*3,b);g.lineTo(a+sx*9,b);g.moveTo(a,b+sy*3);g.lineTo(a,b+sy*9);}g.stroke();
+    g.save();g.beginPath();g.rect(IX,IY,IW,IH);g.clip();
+    if(c.width){const k=c.width/(D.w*IS+2*M);g.drawImage(c,0,0,c.width,c.height,IX-M-winX*IS,IY-M,D.w*IS+2*M,c.height/k);}
+    g.fillStyle=ink.key;g.font='10px '+MONO;g.textBaseline='bottom';
     const L=levelRef,poly=p=>{g.beginPath();p.forEach((q,i)=>{const[x,y]=m(q[0],q[1]);i?g.lineTo(x,y):g.moveTo(x,y);});g.closePath();};
     // crumble: dashed outline, fading as it goes
     g.strokeStyle=ink.key;g.setLineDash([2,1.5]);(L.crumble||[]).forEach((p,i)=>{const cr=world.crumbles&&world.crumbles[i],k=cr?cr.k:0;if(k>=1)return;g.globalAlpha=AM*(cr&&cr.gone?.35:.95);poly(p);g.lineWidth=1;g.stroke();});
     g.globalAlpha=AM*(1);g.setLineDash([2.5,1.8]);g.lineWidth=1.4;g.beginPath();world.ropes.forEach((rp,ri)=>{const sh=ropeBuf[ri]?ropeBuf[ri].sh:ropeShape(rp,new Float64Array((ROPE_N+1)*2));for(let i=0;i<=ROPE_N;i++){const[x,y]=m(sh[i*2],sh[i*2+1]);i?g.lineTo(x,y):g.moveTo(x,y);}});g.stroke();g.setLineDash([]);
+    // checkpoints: dashed rings, filled once passed
+    (world.checks||[]).forEach(cp=>{const[x,y]=m(cp.x,cp.y),rr=cp.r*IS;g.beginPath();g.arc(x,y,rr,0,TAU);if(cp.got){g.fillStyle=ink.mid;g.fill();}g.strokeStyle=ink.key;g.lineWidth=1;g.setLineDash([2,1.5]);g.stroke();g.setLineDash([]);});
     // drops: solid until collected, then hollow
     for(const dp of world.drops||[]){const[x,y]=m(dp.x,dp.y),rr=dp.v>=40?2.8:dp.v>=25?2.3:1.8;if(!inBox(x,y))continue;g.beginPath();g.arc(x,y,rr,0,TAU);
       if(dp.got){g.strokeStyle=ink.mid;g.lineWidth=.9;g.stroke();}else{g.fillStyle=ink.key;g.fill();}}
     // your ride so far and where you are
     g.fillStyle=ink.mid;g.beginPath();const P=world.path;for(let i=Math.max(0,P.length-160);i<P.length;i+=2){const[x,y]=m(P[i][0],P[i][1]);if(!inBox(x,y))continue;g.moveTo(x+.9,y);g.arc(x,y,.9,0,TAU);}g.fill();
+    const gp=ghostAt(S,world);if(gp){const[x,y]=m(gp[0],gp[1]);if(inBox(x,y)){g.strokeStyle=ink.key;g.lineWidth=1;g.setLineDash([1.5,1.2]);g.beginPath();g.arc(x,y,3,0,TAU);g.stroke();g.setLineDash([]);}}
     if(edge){const[x,y]=m(edge.x,edge.y);g.strokeStyle=ink.mid;g.lineWidth=1.3;g.beginPath();g.moveTo(x,y-7);g.lineTo(x,y+3);g.stroke();
       if(edge.land){const[lx,ly]=m(edge.land.x,edge.land.y);g.setLineDash([2,2]);g.beginPath();g.moveTo(x,y);g.quadraticCurveTo((x+lx)/2,Math.min(y,ly)-9,lx,ly);g.stroke();g.setLineDash([]);}}
-    const r=world.rider,[rx_,ry_]=m(r.x,r.y);if(inBox(rx_,ry_)){g.fillStyle=ink.mid;g.beginPath();g.arc(rx_,ry_,3.2,0,TAU);g.fill();g.strokeStyle=danger>.35?ink.mid:ink.key;g.lineWidth=danger>.35?2:1.3;g.beginPath();g.arc(rx_+.8,ry_-.6,3.2+danger*1.5,0,TAU);g.stroke();
+    const[rx_,ry_]=m(r.x,r.y);if(inBox(rx_,ry_)){g.fillStyle=ink.mid;g.beginPath();g.arc(rx_,ry_,3.2,0,TAU);g.fill();g.strokeStyle=danger>.35?ink.mid:ink.key;g.lineWidth=danger>.35?2:1.3;g.beginPath();g.arc(rx_+.8,ry_-.6,3.2+danger*1.5,0,TAU);g.stroke();
       g.strokeStyle=ink.key;g.lineWidth=1.3;g.beginPath();g.moveTo(rx_+heading*5,ry_);g.lineTo(rx_+heading*10,ry_);g.stroke();}
+    g.restore();
+    // caption above the slip: the level, and the clock (a trial's own clock includes time lost to respawns)
+    g.fillStyle=ink.key;g.font='10px '+MONO;g.textBaseline='bottom';g.fillText(sheetName(levelRef),IX,IY-3);
+    const tt=world.t+(S.trial&&S.trial.offset||0);g.textAlign='right';g.fillText(`${tt.toFixed(1)}s`,IX+IW,IY-3);g.textAlign='left';
+    // a long course: how far along you are, as a rule under the slip
+    if(D.w>W){const y=IY+IH+4;g.strokeStyle=ink.key;g.lineWidth=.8;g.beginPath();g.moveTo(IX,y);g.lineTo(IX+IW,y);g.stroke();
+      g.fillStyle=ink.mid;g.fillRect(IX+IW*winX/D.w,y-1.5,IW*W/D.w,3);g.fillStyle=ink.key;g.beginPath();g.arc(IX+IW*clamp(r.x/D.w,0,1),y,2,0,TAU);g.fill();}
     g.restore();g.globalAlpha=AM*(1);}
+
+  // ---------- the best run's ghost (time trials) ----------
+  // S.trial.ghost = {rec:[[t,x,y,z],…]} sorted by t, in run time (respawn penalties included). Where it was at this
+  // moment of your run, interpolated.
+  function ghostAt(S,world){const gh=S.trial&&S.trial.ghost,rec=gh&&gh.rec;if(!rec||rec.length<2)return null;const T=world.t+(S.trial.offset||0);
+    if(T<=rec[0][0])return rec[0].slice(1);if(T>=rec[rec.length-1][0])return null;let lo=0,hi=rec.length-1;while(hi-lo>1){const mid=(lo+hi)>>1;if(rec[mid][0]<=T)lo=mid;else hi=mid;}
+    const a=rec[lo],b=rec[hi],k=(T-a[0])/((b[0]-a[0])||1);return[a[1]+(b[1]-a[1])*k,a[2]+(b[2]-a[2])*k,a[3]+(b[3]-a[3])*k];}
+  // Drawn as a hollow ball: a dashed key ring over a dotted light face, so it never reads as solid.
+  function drawGhost(o,d){const q=o.q;if(!pt(q[0],q[1],q[2]))return;const cx=sx1,cy=sy1,rad=Math.max(1.5,R*ss1),f=fogOf(d)*clamp((d-14)/50,0,1);if(f<.03)return;
+    g.globalAlpha=AM*(.55*f);g.fillStyle=dots.light;g.beginPath();g.arc(cx,cy,rad,0,TAU);g.fill();
+    g.globalAlpha=AM*(f);g.strokeStyle=ink.key;g.lineWidth=clamp(rad*.14,.8,3);g.setLineDash([Math.max(1.5,rad*.35),Math.max(1.2,rad*.25)]);g.beginPath();g.arc(cx,cy,rad,0,TAU);g.stroke();g.setLineDash([]);}
+
+  // A checkpoint: a ring gate across the track like the goal, but dashed, with its number on a tag above it.
+  // Once passed it fades to a thin outline.
+  function drawCheck(o,d,t){const c=o.c,f=fogOf(d)*(c.got?.35:1),n=36,rr=c.r;
+    if(sideMix>0){g.globalAlpha=AM*(sideMix);g.strokeStyle=ink.key;g.lineWidth=2.5;g.setLineDash([6,5]);g.beginPath();for(let i=0;i<=n;i++){const a=i/n*TAU;if(pt(c.x+Math.cos(a)*rr,c.y+Math.sin(a)*rr,0))i?g.lineTo(sx1,sy1):g.moveTo(sx1,sy1);}g.stroke();g.setLineDash([]);}
+    const gb=groundBelow(worldRef,c.x,c.y+rr*.6,0);g.globalAlpha=AM*(f);g.strokeStyle=ink.key;
+    if(gb&&gb.y-c.y<220)for(const s of[-1,1]){const zx=s*rr*.8;if(seg(c.x,c.y+rr*.75,zx,c.x,gb.y,zx*1.2)){g.lineWidth=clamp(2*ss1,.8,6);g.beginPath();g.moveTo(sx1,sy1);g.lineTo(sx2,sy2);g.stroke();}}
+    for(const[k,col,wid,ox]of[[1,ink.mid,4.5,mis],[1,ink.key,3.5,0]]){g.strokeStyle=col;g.beginPath();let sc=0,cnt=0;
+      for(let i=0;i<n;i++){if((i+Math.floor(t*4))%3===2)continue;const a=i/n*TAU,a2=(i+1)/n*TAU;
+        if(seg(c.x,c.y+Math.sin(a)*rr*k,Math.cos(a)*rr*k,c.x,c.y+Math.sin(a2)*rr*k,Math.cos(a2)*rr*k)){g.moveTo(sx1+ox,sy1+ox*.7);g.lineTo(sx2+ox,sy2+ox*.7);sc+=ss1;cnt++;}}
+      if(cnt){g.lineWidth=clamp(wid*sc/cnt,.8,16)*(c.got?.5:1);g.lineCap='round';g.stroke();g.lineCap='butt';}}
+    if(!c.got&&pt(c.x,c.y-rr*1.25,0)&&ss1>.05){const fs=clamp(11*ss1*1.6,7,44);g.font=`800 ${fs.toFixed(1)}px ${STENCIL}`;g.textAlign='center';g.textBaseline='bottom';
+      g.fillStyle=ink.mid;g.fillText('CP '+(o.i+1),sx1+1.2,sy1+1);g.fillStyle=ink.key;g.fillText('CP '+(o.i+1),sx1,sy1);g.textAlign='left';}}
 
   const api={
     // Riso-printed ride backdrop: split-fountain sky, far plates in the level's scene
     // vocabulary, the valley far below. Registered as a Riso scene so it prints like the rest.
     printBackdrop(level,pw,ph){
-      const name='ride-'+level.id,sheet=sheetNo(level);
+      const name='ride-'+level.id,sheet=sheetName(level);
       Riso.SCENES[name]={name:'Ride: '+level.name,after:'the level’s print, seen from inside the sheet',draw:(c,r)=>rideScene(c,r,level,sheet)};
       const seed=(level.bg.seed||1)*7+3,inks=level.bg.inks.map(n=>Riso.INKS[n]||n);
       // Printing is per-pixel JS; cap the plate at 1280 wide and enlarge (the backdrop is shown
@@ -594,7 +638,7 @@ export function createRide(){
       const k=Math.min(1,1280/pw),w=Math.round(pw*k),h=Math.round(ph*k);
       const dens=Riso.renderScene(name,seed,w,h,0);
       const layers=Riso.layersFor(dens,inks,{seed,screen:'grain',mis:2.2*w/1600});
-      const img=Riso.print({w,h,paper:Riso.PAPERS.Natural,layers,texture:1,seed});
+      const img=Riso.print({w,h,paper:Riso.PAPERS[level.bg.paper]||Riso.PAPERS.Natural,layers,texture:1,seed});
       const src=document.createElement('canvas');src.width=w;src.height=h;src.getContext('2d').putImageData(img,0,0);if(k===1)return src;
       const cv=document.createElement('canvas');cv.width=pw;cv.height=ph;const x=cv.getContext('2d');x.imageSmoothingQuality='high';x.drawImage(src,0,0,pw,ph);return cv;},
 
@@ -636,11 +680,12 @@ export function createRide(){
       // the aim point drifts from the page centre to just ahead of the rider.
       const cub=x=>x<.5?4*x*x*x:1-Math.pow(-2*x+2,3)/2,sine=x=>-(Math.cos(Math.PI*x)-1)/2;
       const e=cub(p),rot=sine(clamp((p-.08)/.84,0,1)),aim=cub(clamp(p/.72,0,1));
+      const V=S.view&&S.view.k>0?S.view:{x:0,y:0,k:1},C0=[V.x+W/2/V.k,V.y+H/2/V.k];
       const D0=12000,D1=60,yaw0=-Math.PI/2;let yaw1=E.yaw;while(yaw1-yaw0>Math.PI)yaw1-=TAU;while(yaw1-yaw0<-Math.PI)yaw1+=TAU;
       const f1=[Math.cos(E.th)*Math.cos(E.yaw),Math.sin(E.th),Math.cos(E.th)*Math.sin(E.yaw)],T1=[E.x+f1[0]*D1,E.y+f1[1]*D1,E.z+f1[2]*D1];
       const cyaw=yaw0+(yaw1-yaw0)*rot,cth=E.th*rot+.42*Math.sin(Math.PI*rot)*(1-p*.3);   // a dive: look down across the sheet mid-swoop
-      const d=Math.exp(Math.log(D0)+(Math.log(D1)-Math.log(D0))*e),Fc=Math.exp(Math.log(D0)+(Math.log(E.F)-Math.log(D0))*e);
-      const T=[W/2+(T1[0]-W/2)*aim,H/2+(T1[1]-H/2)*aim,T1[2]*aim],cf=[Math.cos(cth)*Math.cos(cyaw),Math.sin(cth),Math.cos(cth)*Math.sin(cyaw)];
+      const d=Math.exp(Math.log(D0)+(Math.log(D1)-Math.log(D0))*e),Fc=Math.exp(Math.log(D0*V.k)+(Math.log(E.F)-Math.log(D0*V.k))*e);
+      const T=[C0[0]+(T1[0]-C0[0])*aim,C0[1]+(T1[1]-C0[1])*aim,T1[2]*aim],cf=[Math.cos(cth)*Math.cos(cyaw),Math.sin(cth),Math.cos(cth)*Math.sin(cyaw)];
       applyPose(T[0]-cf[0]*d,T[1]-cf[1]*d,T[2]-cf[2]*d,cyaw,cth,Fc);
       distOff=Math.max(0,d-D1);sideMix=1-clamp((p-.08)/.4,0,1);danger=0;const trSave=tr;tr=0;
       // "The paper gives way": mid-swoop the three plates separate in depth (key near, light far)
@@ -666,7 +711,7 @@ export function createRide(){
       return{bg:bgFor(cth,cyaw,r.z*aim,bgS,E.F),sideAlpha:1-clamp((p-.03)/.27,0,1),rideBgAlpha:clamp((p-.22)/.45,0,1)};},
     stats};
   function begin(api,gc,world,level,S){if(worldRef!==world||levelRef!==level)api.reset(world,level,S);
-    g=gc;ink=S.ink;tNow=world.t;
+    g=gc;ink=S.ink;tNow=world.t;Sref=S;
     dots=api.patMode==='app'&&S.pat?S.pat:ridePatterns(gc,ink);pat=api.patMode==='app'||api.patMode==='dots'?dots:tints(ink);
     if(api.smooth!=null)gc.imageSmoothingEnabled=api.smooth;}
   // Halftone patterns built at device resolution and mapped 1:1 to device pixels (no resampling):
@@ -695,6 +740,8 @@ export function createRide(){
       case BOOSTP:drawBoostPiece(it.o,d,t);break;
       case DROPI:drawDrop(it.o,d,t);break;
       case SLINGI:drawSling(it.o,d,t);break;
+      case CHECKI:drawCheck(it.o,d,t);break;
+      case GHOSTI:drawGhost(it.o,d);break;
       default:drawChunk(it.o,d);}}}
   // Backdrop: pitch moves the horizon, yaw slides it (a turn-around, the swoop), soft-clamped to the margin.
   function bgFor(th,yw,z,scale,fr=F){const marginY=H*(scale-1)/2,marginX=W*(scale-1)/2;
